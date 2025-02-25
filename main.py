@@ -1,14 +1,12 @@
-import pandas as pd
+from datetime import timedelta
+
 import numpy as np
-import matplotlib.pyplot as plt
-from datetime import datetime, timedelta
-from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import train_test_split
+import pandas as pd
 import xgboost as xgb
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.model_selection import train_test_split
 
 
-# Load the data
 def load_and_preprocess_data(file_path):
     df = pd.read_csv(file_path)
 
@@ -17,26 +15,16 @@ def load_and_preprocess_data(file_path):
     for col in time_columns:
         if col in df.columns:
             df[col] = pd.to_datetime(df[col], dayfirst=True)
-
-    # Sort by patient ID and timestamp
     df = df.sort_values(by=['SUBJECT_ID', 'TIMER'])
-
     return df
 
 
 # Create features for each patient
 def create_patient_features(patient_df):
-    # Use GLCTIMER for glucose measurements and TIMER for everything
     df = patient_df.copy()
-
-    # Create a proper time series with regular intervals
-    # For this example, we'll use actual timestamps but in a production system,
-    # you might want to resample to regular intervals
-
-    # Extract features
     features_df = pd.DataFrame()
 
-    # Get glucose measurements only
+    # Interested in glucose measurements only
     glucose_df = df[df['GLC'].notna()].copy()
 
     if len(glucose_df) <= 1:
@@ -52,7 +40,6 @@ def create_patient_features(patient_df):
         future_cutoff_2hr = current_time + timedelta(hours=2)
         future_cutoff_3hr = current_time + timedelta(hours=3)
 
-        # Get future readings
         future_1hr = glucose_df[(glucose_df['TIMER'] > current_time) &
                                 (glucose_df['TIMER'] <= future_cutoff_1hr)]['GLC'].mean()
         future_2hr = glucose_df[(glucose_df['TIMER'] > future_cutoff_1hr) &
@@ -81,7 +68,6 @@ def create_patient_features(patient_df):
                                 (df['TIMER'] <= current_time) &
                                 (df['EVENT'] == 'BOLUS_INYECTION')]
 
-        # Calculate insulin features
         short_insulin = recent_insulin[recent_insulin['INSULINTYPE'] == 'Short']['INPUT'].sum()
         long_insulin = recent_insulin[recent_insulin['INSULINTYPE'] == 'Long']['INPUT'].sum()
 
@@ -111,27 +97,21 @@ def create_patient_features(patient_df):
     return features_df
 
 
-# Prepare dataset
 def prepare_dataset(df):
     all_features = pd.DataFrame()
-
-    # Process each patient
     for subject_id, patient_data in df.groupby('SUBJECT_ID'):
         patient_features = create_patient_features(patient_data)
         if patient_features is not None:
             all_features = pd.concat([all_features, patient_features], ignore_index=True)
-
-    # Fill missing values
     all_features = all_features.fillna(method='ffill')
 
-    # Drop rows with NaN target values
+    # Drop rows with NaN
     for target in ['future_glucose_1hr', 'future_glucose_2hr', 'future_glucose_3hr']:
         all_features = all_features[~all_features[target].isna()]
 
     return all_features
 
 
-# Train XGBoost models for 1, 2, and 3 hour predictions
 def train_glucose_prediction_models(features_df):
     models = {}
     feature_cols = ['current_glucose', 'glucose_source',
@@ -142,13 +122,12 @@ def train_glucose_prediction_models(features_df):
     for hours in [1, 2, 3]:
         target_col = f'future_glucose_{hours}hr'
 
-        # Split data
         X = features_df[feature_cols]
         y = features_df[target_col]
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-        # Train model
+        # Train
         model = xgb.XGBRegressor(
             objective='reg:squarederror',
             n_estimators=100,
@@ -158,7 +137,6 @@ def train_glucose_prediction_models(features_df):
             colsample_bytree=0.8,
             random_state=42
         )
-
         model.fit(X_train, y_train)
 
         # Evaluate
@@ -177,13 +155,11 @@ def train_glucose_prediction_models(features_df):
     return models
 
 
-# Prediction functions
 def predict_from_single_value(glucose_value, models):
     """Predict future glucose values from a single current reading."""
-    # Create a feature row with the current value and defaults
     features = {
         'current_glucose': glucose_value,
-        'glucose_source': 0,  # Default to FINGERSTICK
+        'glucose_source': 0,
         'prev_glucose_1': glucose_value,
         'prev_glucose_2': glucose_value,
         'prev_glucose_3': glucose_value,
@@ -193,10 +169,8 @@ def predict_from_single_value(glucose_value, models):
         'long_insulin_dose': 0
     }
 
-    # Convert to DataFrame
     X = pd.DataFrame([features])
 
-    # Make predictions
     predictions = {}
     for hours, model in models.items():
         predictions[f'{hours}hr'] = model.predict(X)[0]
@@ -209,23 +183,20 @@ def predict_from_sequence(glucose_values, models):
     if len(glucose_values) != 5:
         raise ValueError("Please provide exactly 5 glucose values")
 
-    # Create a feature row with the sequence
     features = {
         'current_glucose': glucose_values[-1],
-        'glucose_source': 0,  # Default to FINGERSTICK
+        'glucose_source': 0,
         'prev_glucose_1': glucose_values[-2],
         'prev_glucose_2': glucose_values[-3],
         'prev_glucose_3': glucose_values[-4],
         'prev_glucose_4': glucose_values[-5],
-        'prev_glucose_5': glucose_values[-5],  # Duplicate the earliest value as we only have 5 total
+        'prev_glucose_5': glucose_values[-5],
         'short_insulin_dose': 0,
         'long_insulin_dose': 0
     }
 
-    # Convert to DataFrame
     X = pd.DataFrame([features])
 
-    # Make predictions
     predictions = {}
     for hours, model in models.items():
         predictions[f'{hours}hr'] = model.predict(X)[0]
@@ -233,32 +204,24 @@ def predict_from_sequence(glucose_values, models):
     return predictions
 
 
-# Main execution function
 def main(file_path):
-    # Load and preprocess data
     print("Loading and preprocessing data...")
     df = load_and_preprocess_data(file_path)
 
-    # Prepare features
     print("Creating features...")
     features_df = prepare_dataset(df)
 
-    # Train models
     print("Training models...")
     models = train_glucose_prediction_models(features_df)
 
-    # Example predictions
     print("\nExample Predictions:")
-
-    # Single value prediction
-    single_value = 150  # Example glucose reading
+    single_value = 150  # Example single value
     print(f"\nPrediction from single value {single_value}:")
     single_pred = predict_from_single_value(single_value, models)
     for time, value in single_pred.items():
         print(f"  Predicted glucose at {time}: {value:.1f}")
 
-    # Sequence prediction
-    sequence = [130, 145, 160, 155, 150]  # Example sequence (5 readings, 5 min apart)
+    sequence = [130, 145, 160, 155, 150]  # Sequence of 5 glucose values
     print(f"\nPrediction from sequence {sequence}:")
     seq_pred = predict_from_sequence(sequence, models)
     for time, value in seq_pred.items():
@@ -267,7 +230,6 @@ def main(file_path):
     return models
 
 
-# If running as a script
 if __name__ == "__main__":
     file_path = "dataset_small/glucose_insulin_smallest.csv"
     models = main(file_path)
