@@ -1,0 +1,2 @@
+timestamp,current_glucose,predicted_1hr,lower_bound_1hr,upper_bound_1hr,prediction_time_1hr,predicted_2hr,lower_bound_2hr,upper_bound_2hr,prediction_time_2hr,predicted_3hr,lower_bound_3hr,upper_bound_3hr,prediction_time_3hr
+2025-02-01 08:05:00,160,161.7371,100.3224,203.79634,2025-02-01 09:05:00,144.48206,90.03968,208.78229,2025-02-01 10:05:00,148.30486,91.41966,216.28946,2025-02-01 11:05:00
