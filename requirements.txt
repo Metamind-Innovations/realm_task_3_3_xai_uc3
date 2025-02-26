@@ -1,6 +1,6 @@
-numpy==1.26.4
-pandas
-scikit_learn
-xgboost
-pmdarima
-matplotlib
+joblib==1.4.2
+matplotlib==3.10.0
+numpy==2.2.3
+pandas==2.2.3
+scikit-learn==1.6.1
+xgboost==2.1.4
