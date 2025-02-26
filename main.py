@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import numpy as np
 import pandas as pd
-import xgboost as xgb
+import xgboost_prediction as xgb
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
 
@@ -231,5 +231,5 @@ def main(file_path):
 
 
 if __name__ == "__main__":
-    file_path = "dataset_small/glucose_insulin_smallest.csv"
+    file_path = "dataset_small/glucose_insulin_5K.csv"
     models = main(file_path)
