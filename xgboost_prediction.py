@@ -9,6 +9,7 @@ import xgboost as xgb
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
 
+OUTPUT_FILE = "glucose_predictions.csv"
 
 def load_and_preprocess_training_data(file_path):
     """Load training data and convert time columns to datetime format"""
@@ -125,7 +126,6 @@ def create_prediction_features(patient_df):
         raise ValueError("Need at least 5 glucose readings to make predictions")
 
     for i in range(len(df) - 4):
-        current_time = df.iloc[i]['time']
         sequence = df.iloc[i:i + 5]
 
         glucose_values = sequence['glucose_level'].tolist()
@@ -518,7 +518,7 @@ def plot_patient_predictions(patient_df, predictions_df):
     plt.show()
 
 
-def export_predictions(predictions_df, output_file='glucose_predictions.csv'):
+def export_predictions(predictions_df, output_file=OUTPUT_FILE):
     """Export predictions to CSV file"""
     predictions_df.to_csv(output_file, index=False)
     print(f"Predictions exported to {output_file}")
@@ -591,7 +591,7 @@ def evaluate_predictions(predictions_df, actual_df):
     return evaluation_results
 
 
-def process_patient_data(patient_file, model_dir='models', output_file='glucose_predictions.csv'):
+def process_patient_data(patient_file, model_dir='models', output_file=OUTPUT_FILE):
     """
     End-to-end process to load patient data, generate predictions,
     visualize results, and evaluate accuracy if future data is available.
@@ -623,7 +623,7 @@ def process_patient_data(patient_file, model_dir='models', output_file='glucose_
     plot_patient_predictions(patient_df, predictions_df)
 
     # Evaluate predictions against future data if available
-    future_end_time = predictions_df[f'prediction_time_3hr'].max()
+    future_end_time = predictions_df['prediction_time_3hr'].max()
     if patient_df['time'].max() >= future_end_time:
         print("\nEvaluating prediction accuracy...")
         evaluation_results = evaluate_predictions(predictions_df, patient_df)
@@ -671,7 +671,7 @@ if __name__ == "__main__":
                         help='CSV file with training data')
     parser.add_argument('--patient-file', type=str, help='CSV file with patient data (time and glucose_level columns)')
     parser.add_argument('--model-dir', type=str, default='models', help='Directory for model storage')
-    parser.add_argument('--output-file', type=str, default='glucose_predictions.csv',
+    parser.add_argument('--output-file', type=str, default=OUTPUT_FILE,
                         help='Output file for predictions')
 
     args = parser.parse_args()
