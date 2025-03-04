@@ -5,11 +5,11 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from utils.common_utils import load_patient_data
-from utils.lstm_utils import train_models_workflow as train_lstm_models, \
-    process_patient_data as process_lstm_patient_data, plot_lstm_predictions
-from utils.xgboost_utils import train_models as train_xgboost_models, \
-    process_patient_data as process_xgboost_patient_data, plot_patient_predictions as plot_xgboost_predictions
+# Import from reorganized modules
+from common.data_loader import load_patient_data
+from lstm_utils import train_models_workflow, process_patient_data as process_lstm_patient_data, plot_lstm_predictions
+from xgboost_utils import train_models as train_xgboost_models, process_patient_data as process_xgboost_patient_data, \
+    plot_patient_predictions as plot_xgboost_predictions
 
 
 def setup_arg_parser():
@@ -26,7 +26,7 @@ def setup_arg_parser():
     parser.add_argument('--predict', action='store_true', help='Make predictions on patient data')
 
     # Model type selection
-    parser.add_argument('--model-type', type=str, choices=['xgboost', 'lstmutils', 'ensemble'],
+    parser.add_argument('--model-type', type=str, choices=['xgboost', 'lstm', 'ensemble'],
                         default='xgboost', help='Type of model to use (default: xgboost)')
 
     # File paths
@@ -35,7 +35,7 @@ def setup_arg_parser():
 
     # Model directories
     parser.add_argument('--xgboost-dir', type=str, default='xgboost_models', help='Directory for XGBoost model storage')
-    parser.add_argument('--lstmutils-dir', type=str, default='lstm_models', help='Directory for LSTM model storage')
+    parser.add_argument('--lstm-dir', type=str, default='lstm_models', help='Directory for LSTM model storage')
 
     # Output options
     parser.add_argument('--output-file', type=str, help='Output file for predictions (default is auto-generated)')
@@ -100,7 +100,7 @@ def generate_output_filename(args):
 
     if args.model_type == 'xgboost':
         filename = f"xgboost_predictions_{timestamp}.csv"
-    elif args.model_type == 'lstmutils':
+    elif args.model_type == 'lstm':
         filename = f"lstm_predictions_{timestamp}.csv"
     elif args.model_type == 'ensemble':
         filename = f"ensemble_predictions_{timestamp}.csv"
@@ -164,7 +164,7 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
 
     # Plot predictions for different horizons
     colors = {'xgboost': ['red', 'darkred', 'indianred'],
-              'lstmutils': ['green', 'darkgreen', 'lightgreen']}
+              'lstm': ['green', 'darkgreen', 'lightgreen']}
 
     for hours in [1, 2, 3]:
         # XGBoost predictions
@@ -184,7 +184,7 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
             plt.scatter(
                 lstm_predictions[f'prediction_time_{hours}hr'],
                 lstm_predictions[f'predicted_{hours}hr'],
-                color=colors['lstmutils'][hours - 1],
+                color=colors['lstm'][hours - 1],
                 label=f'LSTM {hours}-hour',
                 marker='x',
                 s=50,
@@ -350,9 +350,9 @@ def main():
             )
             print("XGBoost training complete!")
 
-        if args.model_type == 'lstmutils' or args.model_type == 'ensemble':
+        if args.model_type == 'lstm' or args.model_type == 'ensemble':
             print(f"Starting LSTM model training using data from {args.training_file}")
-            lstm_models, lstm_scalers, lstm_results = train_lstm_models(
+            lstm_models, lstm_scalers, lstm_results = train_models_workflow(
                 args.training_file,
                 model_dir=args.lstm_dir
             )
@@ -393,7 +393,7 @@ def main():
             else:
                 print("XGBoost prediction failed. Please check the error messages above.")
 
-        elif args.model_type == 'lstmutils':
+        elif args.model_type == 'lstm':
             print(f"Making LSTM predictions for patient data in {args.patient_file}")
             predictions = process_lstm_patient_data(
                 args.patient_file,
@@ -429,7 +429,12 @@ def main():
 
     # Placeholder for future XAI integration
     if args.xai:
-        print("XAI functionality will be available in a future update.")
+        try:
+            from utils.xai_utils import generate_explanation_report
+            print("Generating model explanations...")
+            # Implementation would go here
+        except ImportError:
+            print("XAI functionality will be available in a future update.")
 
     return 0
 
