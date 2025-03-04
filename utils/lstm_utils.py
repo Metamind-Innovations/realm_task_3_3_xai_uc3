@@ -1,5 +1,3 @@
-import argparse
-import hashlib
 import os
 from datetime import timedelta
 
@@ -12,13 +10,13 @@ from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau
 from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, Bidirectional
-from tensorflow.keras.models import Sequential, load_model, save_model
+from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.optimizers import Adam
 from tqdm import tqdm
 
+from common_utils import clean_infinite_values, encode_icd9_code, get_column_name
+
 # Constants
-OUTPUT_FILE = "model_outputs/lstm_glucose_predictions.csv"
-MODEL_DIRECTORY = "lstm_models"
 MAX_SEQUENCE_LENGTH = 10
 PREDICTION_HORIZONS = [1, 2, 3]  # Hours into the future
 FEATURES_TO_INCLUDE = [
@@ -26,204 +24,6 @@ FEATURES_TO_INCLUDE = [
     'glucose_min', 'glucose_max', 'glucose_range', 'glucose_acceleration',
     'hour_of_day', 'is_daytime', 'day_of_week', 'is_weekend'
 ]
-
-
-def load_and_preprocess_training_data(file_path):
-    """
-    Load training data and convert time columns to datetime format.
-
-    Performs case-insensitive column mapping to standardize column names
-    and converts time-related fields to appropriate datetime format.
-
-    :param file_path: Path to the CSV file with training data
-    :type file_path: str
-    :returns: Preprocessed DataFrame with mapped columns
-    :rtype: pandas.DataFrame
-    """
-    df = pd.read_csv(file_path)
-
-    print("Actual CSV columns:", df.columns.tolist())
-
-    col_mapping = {}
-    col_lower_to_actual = {col.lower(): col for col in df.columns}
-
-    expected_columns = {
-        'subject_id': 'SUBJECT_ID',
-        'timer': 'TIMER',
-        'starttime': 'STARTTIME',
-        'glctimer': 'GLCTIMER',
-        'endtime': 'ENDTIME',
-        'input': 'INPUT',
-        'input_hrs': 'INPUT_HRS',
-        'glc': 'GLC',
-        'infxstop': 'INFXSTOP',
-        'gender': 'GENDER',
-        'event': 'EVENT',
-        'glcsource': 'GLCSOURCE',
-        'insulintype': 'INSULINTYPE',
-        'first_icu_stay': 'FIRST_ICU_STAY',
-        'admission_age': 'ADMISSION_AGE',
-        'los_icu_days': 'LOS_ICU_DAYS',
-        'icd9_code': 'ICD9_CODE'
-    }
-
-    for exp_lower, exp_upper in expected_columns.items():
-        if exp_lower in col_lower_to_actual:
-            col_mapping[exp_upper] = col_lower_to_actual[exp_lower]
-        else:
-            if exp_upper in df.columns:
-                col_mapping[exp_upper] = exp_upper
-
-    print("Using column mapping:", col_mapping)
-
-    time_columns = ['TIMER', 'STARTTIME', 'GLCTIMER', 'ENDTIME']
-    for col in time_columns:
-        if col in col_mapping and col_mapping[col] in df.columns:
-            df[col_mapping[col]] = pd.to_datetime(df[col_mapping[col]], dayfirst=True, errors='coerce')
-
-    numeric_columns = ['INPUT', 'INPUT_HRS', 'GLC', 'INFXSTOP']
-    for col in numeric_columns:
-        if col in col_mapping and col_mapping[col] in df.columns:
-            df[col_mapping[col]] = pd.to_numeric(df[col_mapping[col]], errors='coerce')
-
-    sort_cols = []
-    if 'SUBJECT_ID' in col_mapping and col_mapping['SUBJECT_ID'] in df.columns:
-        sort_cols.append(col_mapping['SUBJECT_ID'])
-    if 'TIMER' in col_mapping and col_mapping['TIMER'] in df.columns:
-        sort_cols.append(col_mapping['TIMER'])
-
-    if sort_cols:
-        df = df.sort_values(by=sort_cols)
-    else:
-        print("Warning: Could not sort by SUBJECT_ID and TIMER - columns not found")
-
-    df.attrs['column_mapping'] = col_mapping
-
-    return df
-
-
-def load_patient_data(file_path):
-    """
-    Load patient data for prediction, ensuring required columns exist.
-
-    Identifies time and glucose columns using case-insensitive matching
-    and attempts to parse datetime formats using several common patterns.
-
-    :param file_path: Path to the CSV file with patient data
-    :type file_path: str
-    :returns: DataFrame with time and glucose data properly formatted
-    :rtype: pandas.DataFrame
-    :raises ValueError: If required columns are missing or time parsing fails
-    """
-    df = pd.read_csv(file_path)
-
-    print("Patient data columns:", df.columns.tolist())
-
-    time_col = None
-    for col in df.columns:
-        if col.lower() == 'time':
-            time_col = col
-            break
-
-    glucose_col = None
-    for col in df.columns:
-        if col.lower() in ['glucose_level', 'glucose', 'glc']:
-            glucose_col = col
-            break
-
-    if not time_col or not glucose_col:
-        raise ValueError(f"CSV file must contain time and glucose_level columns. Found: {df.columns.tolist()}")
-
-    col_mapping = {
-        'time': time_col,
-        'glucose_level': glucose_col
-    }
-
-    df.attrs['column_mapping'] = col_mapping
-
-    print(f"Using '{time_col}' as time column and '{glucose_col}' as glucose column")
-
-    datetime_formats = ['%d/%m/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S']
-
-    for dt_format in datetime_formats:
-        try:
-            df[time_col] = pd.to_datetime(df[time_col], format=dt_format)
-            print(f"Parsed dates using format: {dt_format}")
-            break
-        except:
-            continue
-
-    if not pd.api.types.is_datetime64_dtype(df[time_col]):
-        print("Using flexible datetime parser")
-        df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
-
-    if df[time_col].isna().all():
-        raise ValueError(f"Could not parse '{time_col}' column as datetime")
-
-    df = df.sort_values(by=time_col)
-
-    return df
-
-
-def clean_infinite_values(df):
-    """
-    Replace infinities and extremely large values in dataframe with NaN or capped values.
-
-    Helps prevent numerical instability in calculations by:
-    1. Replacing infinity values with NaN
-    2. Capping extreme values (beyond 1e10) to reasonable maximum
-
-    :param df: Input dataframe with potential infinite or extreme values
-    :type df: pandas.DataFrame
-    :returns: Cleaned dataframe with handled values
-    :rtype: pandas.DataFrame
-    """
-    inf_count = np.isinf(df.select_dtypes(include=[np.number])).sum().sum()
-
-    if inf_count > 0:
-        print(f"Warning: Found {inf_count} infinity values in the dataset. Replacing with NaN.")
-        df = df.replace([np.inf, -np.inf], np.nan)
-
-    for col in df.select_dtypes(include=[np.number]).columns:
-        extreme_mask = (df[col].abs() > 1e10) & df[col].notna()
-        extreme_count = extreme_mask.sum()
-
-        if extreme_count > 0:
-            print(f"Warning: Found {extreme_count} extreme values in column '{col}'. Capping to reasonable values.")
-            df.loc[extreme_mask, col] = df.loc[extreme_mask, col].apply(
-                lambda x: 1e10 if x > 0 else -1e10
-            )
-
-    return df
-
-
-def encode_icd9_code(code):
-    """
-    Create a numeric representation of ICD9 code.
-
-    Uses first 3 characters as category and hashes the rest for subcategory.
-    This creates a consistent numerical representation usable for modeling.
-
-    :param code: ICD-9 diagnosis code string
-    :type code: str
-    :returns: Tuple of (category, subcategory) as numerical values
-    :rtype: tuple(float, float)
-    """
-    if pd.isna(code) or not isinstance(code, str) or len(code) < 3:
-        return 0.0, 0.0
-
-    try:
-        category = float(code[:3])
-    except ValueError:
-        category = 0.0
-
-    if len(code) > 3:
-        hash_val = int(hashlib.md5(code[3:].encode()).hexdigest(), 16)
-        subcategory = float(hash_val % 1000) / 1000  # Normalize to 0-1
-    else:
-        subcategory = 0.0
-
-    return category, subcategory
 
 
 def extract_patient_features(patient_df, is_training=False):
@@ -241,29 +41,22 @@ def extract_patient_features(patient_df, is_training=False):
     :returns: Expanded DataFrame with calculated features
     :rtype: pandas.DataFrame
     """
-    col_mapping = patient_df.attrs.get('column_mapping', {})
+    df = patient_df.copy()
 
-    def get_col(expected_col):
-        if expected_col in col_mapping and col_mapping[expected_col] in patient_df.columns:
-            return col_mapping[expected_col]
-        elif expected_col in patient_df.columns:
-            return expected_col
-        elif expected_col.lower() in patient_df.columns:
-            return expected_col.lower()
-        return None
-
-    time_col = get_col('TIMER') or get_col('timer') or get_col('time') or get_col('TIME')
-    glucose_col = get_col('GLC') or get_col('glc') or get_col('glucose_level') or get_col('GLUCOSE_LEVEL') or get_col(
-        'glucose')
+    # Get essential column names
+    time_col = get_column_name(df, 'TIMER') or get_column_name(df, 'timer') or get_column_name(df,
+                                                                                               'time') or get_column_name(
+        df, 'TIME')
+    glucose_col = get_column_name(df, 'GLC') or get_column_name(df, 'glc') or get_column_name(df,
+                                                                                              'glucose_level') or get_column_name(
+        df, 'GLUCOSE_LEVEL') or get_column_name(df, 'glucose')
 
     if not time_col:
-        print(f"Error: Time column not found in available columns: {patient_df.columns.tolist()}")
+        print(f"Error: Time column not found in available columns: {df.columns.tolist()}")
         return None
     if not glucose_col:
-        print(f"Error: Glucose column not found in available columns: {patient_df.columns.tolist()}")
+        print(f"Error: Glucose column not found in available columns: {df.columns.tolist()}")
         return None
-
-    df = patient_df.copy()
 
     df = df.sort_values(by=time_col)
 
@@ -294,14 +87,14 @@ def extract_patient_features(patient_df, is_training=False):
 
     demographics = {}
 
-    gender_col = get_col('GENDER')
+    gender_col = get_column_name(df, 'GENDER')
     if gender_col and len(df) > 0:
         gender = df[gender_col].iloc[0]
         demographics['gender'] = 1 if gender == 'M' else 0 if gender == 'F' else 0.5
     else:
         demographics['gender'] = 0.5  # Default
 
-    age_col = get_col('ADMISSION_AGE')
+    age_col = get_column_name(df, 'ADMISSION_AGE')
     if age_col and len(df) > 0:
         age = df[age_col].iloc[0]
         if not pd.isna(age) and isinstance(age, (int, float)):
@@ -311,7 +104,7 @@ def extract_patient_features(patient_df, is_training=False):
     else:
         demographics['age'] = 0.5  # Default
 
-    icd9_col = get_col('ICD9_CODE')
+    icd9_col = get_column_name(df, 'ICD9_CODE')
     if icd9_col and len(df) > 0:
         icd9_code = df[icd9_col].iloc[0]
         if not pd.isna(icd9_code) and isinstance(icd9_code, str):
@@ -417,7 +210,7 @@ def create_lstm_model(sequence_length, n_features):
 
     Architecture includes:
     - Two bidirectional LSTM layers with batch normalization and dropout
-    - Dense model_outputs layers for final prediction
+    - Dense output layers for final prediction
 
     :param sequence_length: Number of time points in input sequences
     :type sequence_length: int
@@ -449,7 +242,7 @@ def create_lstm_model(sequence_length, n_features):
     return model
 
 
-def train_lstm_models(X, y, model_dir=MODEL_DIRECTORY,
+def train_lstm_models(X, y, model_dir='lstm_models',
                       test_size=0.2, validation_size=0.2, random_state=42):
     """
     Train LSTM models for different prediction horizons.
@@ -588,7 +381,7 @@ def train_lstm_models(X, y, model_dir=MODEL_DIRECTORY,
     return models, scalers, results
 
 
-def load_lstm_models(model_dir=MODEL_DIRECTORY):
+def load_lstm_models(model_dir='lstm_models'):
     """
     Load trained LSTM models and scalers from disk.
 
@@ -899,7 +692,7 @@ def plot_lstm_predictions(patient_df, predictions_df, save_png=False):
     plt.show()
 
 
-def plot_training_history(results, model_dir=MODEL_DIRECTORY):
+def plot_training_history(results, model_dir='lstm_models'):
     """
     Plot training history for each model.
 
@@ -943,7 +736,7 @@ def plot_training_history(results, model_dir=MODEL_DIRECTORY):
     plt.show()
 
 
-def compare_prediction_horizons(results, model_dir=MODEL_DIRECTORY):
+def compare_prediction_horizons(results, model_dir='lstm_models'):
     """
     Compare metrics across prediction horizons.
 
@@ -986,72 +779,6 @@ def compare_prediction_horizons(results, model_dir=MODEL_DIRECTORY):
     plt.tight_layout()
     plt.savefig(os.path.join(model_dir, 'prediction_horizons.png'), dpi=300)
     plt.show()
-
-
-def process_patient_data(patient_file, model_dir=MODEL_DIRECTORY, output_file=OUTPUT_FILE, sequence_length=None):
-    """
-    End-to-end process to load patient data, generate predictions, and export results.
-
-    Handles adaptive sequence length selection based on input data size.
-
-    :param patient_file: Path to CSV file with patient data
-    :type patient_file: str
-    :param model_dir: Directory containing trained models
-    :type model_dir: str
-    :param output_file: Path for saving prediction model_outputs
-    :type output_file: str
-    :param sequence_length: Override for sequence length, useful for very short inputs
-    :type sequence_length: int
-    :returns: DataFrame with predictions
-    :rtype: pandas.DataFrame
-    """
-    print(f"Loading patient data from {patient_file}...")
-    patient_df = load_patient_data(patient_file)
-
-    row_count = len(patient_df)
-    print(f"Input CSV has {row_count} rows")
-
-    if sequence_length is None:
-        if row_count < 5:
-            sequence_length = max(2, row_count)
-            print(f"Using reduced sequence length of {sequence_length} for short input")
-        else:
-            sequence_length = min(MAX_SEQUENCE_LENGTH, row_count)
-            print(f"Using sequence length of {sequence_length}")
-    else:
-        print(f"Using user-specified sequence length of {sequence_length}")
-
-    print("Loading LSTM models...")
-    models, scalers = load_lstm_models(model_dir)
-
-    if not models or not scalers:
-        print("Error: No models or scalers found. Please train models first.")
-        return None
-
-    print("Making predictions...")
-    sequences, timestamps = prepare_prediction_sequences(patient_df, sequence_length=sequence_length)
-
-    if sequences is None or timestamps is None:
-        print("Error: Could not prepare sequences for prediction")
-        return None
-
-    predictions_df = predict_from_sequences(sequences, timestamps, models, scalers)
-
-    if len(predictions_df) == 0:
-        print("Error: Could not generate any predictions")
-        return None
-
-    predictions_df.to_csv(output_file, index=False)
-    print(f"Predictions exported to {output_file}")
-
-    print("Plotting results...")
-    try:
-        plot_lstm_predictions(patient_df, predictions_df)
-    except Exception as e:
-        print(f"Error plotting predictions: {str(e)}")
-        print("Continuing without visualization...")
-
-    return predictions_df
 
 
 def predict_from_sequences(sequences, timestamps, models, scalers):
@@ -1131,7 +858,76 @@ def predict_from_sequences(sequences, timestamps, models, scalers):
     return predictions_df
 
 
-def train_models_workflow(training_file, model_dir=MODEL_DIRECTORY):
+def process_patient_data(patient_file, model_dir='lstm_models',
+                         output_file='lstm_glucose_predictions.csv', sequence_length=None):
+    """
+    End-to-end process to load patient data, generate predictions, and export results.
+
+    Handles adaptive sequence length selection based on input data size.
+
+    :param patient_file: Path to CSV file with patient data
+    :type patient_file: str
+    :param model_dir: Directory containing trained models
+    :type model_dir: str
+    :param output_file: Path for saving prediction output
+    :type output_file: str
+    :param sequence_length: Override for sequence length, useful for very short inputs
+    :type sequence_length: int
+    :returns: DataFrame with predictions
+    :rtype: pandas.DataFrame
+    """
+    from common_utils import load_patient_data, export_predictions
+
+    print(f"Loading patient data from {patient_file}...")
+    patient_df = load_patient_data(patient_file)
+
+    row_count = len(patient_df)
+    print(f"Input CSV has {row_count} rows")
+
+    if sequence_length is None:
+        if row_count < 5:
+            sequence_length = max(2, row_count)
+            print(f"Using reduced sequence length of {sequence_length} for short input")
+        else:
+            sequence_length = min(MAX_SEQUENCE_LENGTH, row_count)
+            print(f"Using sequence length of {sequence_length}")
+    else:
+        print(f"Using user-specified sequence length of {sequence_length}")
+
+    print("Loading LSTM models...")
+    models, scalers = load_lstm_models(model_dir)
+
+    if not models or not scalers:
+        print("Error: No models or scalers found. Please train models first.")
+        return None
+
+    print("Making predictions...")
+    sequences, timestamps = prepare_prediction_sequences(patient_df, sequence_length=sequence_length)
+
+    if sequences is None or timestamps is None:
+        print("Error: Could not prepare sequences for prediction")
+        return None
+
+    predictions_df = predict_from_sequences(sequences, timestamps, models, scalers)
+
+    if len(predictions_df) == 0:
+        print("Error: Could not generate any predictions")
+        return None
+
+    export_predictions(predictions_df, output_file)
+    print(f"Predictions exported to {output_file}")
+
+    print("Plotting results...")
+    try:
+        plot_lstm_predictions(patient_df, predictions_df)
+    except Exception as e:
+        print(f"Error plotting predictions: {str(e)}")
+        print("Continuing without visualization...")
+
+    return predictions_df
+
+
+def train_models_workflow(training_file, model_dir='lstm_models'):
     """
     Workflow for training LSTM models.
 
@@ -1145,12 +941,12 @@ def train_models_workflow(training_file, model_dir=MODEL_DIRECTORY):
     :returns: Trained models, scalers, and evaluation results
     :rtype: tuple(dict, dict, dict)
     """
+    from common_utils import load_and_preprocess_training_data
+
     print(f"Loading training data from {training_file}...")
     df = load_and_preprocess_training_data(training_file)
 
-    col_mapping = df.attrs.get('column_mapping', {})
-
-    subject_id_col = col_mapping.get('SUBJECT_ID', 'subject_id')
+    subject_id_col = get_column_name(df, 'SUBJECT_ID')
     if subject_id_col not in df.columns:
         subject_id_col = 'subject_id'
         if subject_id_col not in df.columns:
@@ -1178,54 +974,3 @@ def train_models_workflow(training_file, model_dir=MODEL_DIRECTORY):
 
     print(f"Models saved to {model_dir} directory")
     return models, scalers, results
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='LSTM Glucose Prediction System')
-    parser.add_argument('--train', action='store_true', help='Train new models')
-    parser.add_argument('--predict', action='store_true', help='Make predictions on patient data')
-    parser.add_argument('--training-file', type=str, help='CSV file with training data')
-    parser.add_argument('--patient-file', type=str, help='CSV file with patient data (time and glucose_level columns)')
-    parser.add_argument('--model-dir', type=str, default=MODEL_DIRECTORY, help='Directory for model storage')
-    parser.add_argument('--model_outputs-file', type=str, default=OUTPUT_FILE, help='Output file for predictions')
-    parser.add_argument('--sequence-length', type=int,
-                        help='Number of past readings to use for prediction (default: adaptive)')
-
-    args = parser.parse_args()
-
-    if args.train and args.predict:
-        print("Error: Cannot both train and predict at the same time. Please choose one operation.")
-        exit(1)
-
-    if not args.train and not args.predict:
-        print("Error: Must specify either --train or --predict")
-        parser.print_help()
-        exit(1)
-
-    if args.train:
-        if not args.training_file:
-            print("Error: Training file must be specified with --training-file")
-            exit(1)
-
-        print(f"Starting LSTM model training using data from {args.training_file}")
-        train_models_workflow(args.training_file, args.model_dir)
-        print("Training complete!")
-
-    if args.predict:
-        if not args.patient_file:
-            print("Error: Patient file must be specified with --patient-file")
-            exit(1)
-
-        print(f"Making predictions for patient data in {args.patient_file}")
-        predictions = process_patient_data(
-            args.patient_file,
-            args.model_dir,
-            args.output_file,
-            sequence_length=args.sequence_length
-        )
-
-        if predictions is not None:
-            print(f"Predictions saved to {args.output_file}")
-            print("Prediction complete!")
-        else:
-            print("Prediction failed. Please check the error messages above.")

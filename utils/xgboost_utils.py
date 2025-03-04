@@ -1,195 +1,33 @@
-import hashlib
 import os
-from datetime import timedelta
-
-import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import xgboost as xgb
+import matplotlib.pyplot as plt
+import joblib
+from datetime import timedelta
+from tqdm import tqdm
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 from sklearn.model_selection import train_test_split
-from tqdm import tqdm
 
-OUTPUT_FILE = "model_outputs/glucose_predictions.csv"
-
-
-def load_and_preprocess_training_data(file_path):
-    df = pd.read_csv(file_path)
-    print("Actual CSV columns:", df.columns.tolist())
-
-    col_mapping = {}
-    col_lower_to_actual = {col.lower(): col for col in df.columns}
-
-    expected_columns = {
-        'subject_id': 'SUBJECT_ID',
-        'hadm_id': 'HADM_ID',  # Added
-        'icustay_id': 'ICUSTAY_ID',  # Added
-        'timer': 'TIMER',
-        'starttime': 'STARTTIME',
-        'glctimer': 'GLCTIMER',
-        'endtime': 'ENDTIME',
-        'input': 'INPUT',
-        'input_hrs': 'INPUT_HRS',
-        'glc': 'GLC',
-        'infxstop': 'INFXSTOP',
-        'gender': 'GENDER',
-        'event': 'EVENT',
-        'glcsource': 'GLCSOURCE',
-        'insulintype': 'INSULINTYPE',
-        'first_icu_stay': 'FIRST_ICU_STAY',
-        'admission_age': 'ADMISSION_AGE',
-        'los_icu_days': 'LOS_ICU_DAYS',
-        'icd9_code': 'ICD9_CODE'
-    }
-
-    for exp_lower, exp_upper in expected_columns.items():
-        if exp_lower in col_lower_to_actual:
-            col_mapping[exp_upper] = col_lower_to_actual[exp_lower]
-        else:
-            if exp_upper in df.columns:
-                col_mapping[exp_upper] = exp_upper
-
-    print("Using column mapping:", col_mapping)
-
-    time_columns = ['TIMER', 'STARTTIME', 'GLCTIMER', 'ENDTIME']
-    for col in time_columns:
-        if col in col_mapping and col_mapping[col] in df.columns:
-            df[col_mapping[col]] = pd.to_datetime(df[col_mapping[col]], dayfirst=True, errors='coerce')
-
-    numeric_columns = ['INPUT', 'INPUT_HRS', 'GLC', 'INFXSTOP', 'HADM_ID', 'ICUSTAY_ID']
-    for col in numeric_columns:
-        if col in col_mapping and col_mapping[col] in df.columns:
-            df[col_mapping[col]] = pd.to_numeric(df[col_mapping[col]], errors='coerce')
-
-    categorical_columns = ['GENDER', 'EVENT', 'GLCSOURCE', 'INSULINTYPE']
-    for col in categorical_columns:
-        if col in col_mapping and col_mapping[col] in df.columns:
-            df[col_mapping[col]] = df[col_mapping[col]].astype('category')
-
-    if 'FIRST_ICU_STAY' in col_mapping and col_mapping['FIRST_ICU_STAY'] in df.columns:
-        df[col_mapping['FIRST_ICU_STAY']] = df[col_mapping['FIRST_ICU_STAY']].astype(bool)
-
-    sort_cols = []
-    if 'SUBJECT_ID' in col_mapping and col_mapping['SUBJECT_ID'] in df.columns:
-        sort_cols.append(col_mapping['SUBJECT_ID'])
-    if 'TIMER' in col_mapping and col_mapping['TIMER'] in df.columns:
-        sort_cols.append(col_mapping['TIMER'])
-
-    if sort_cols:
-        df = df.sort_values(by=sort_cols)
-
-    df.attrs['column_mapping'] = col_mapping
-    return df
-
-
-def load_patient_data(file_path):
-    df = pd.read_csv(file_path)
-    print("Patient data columns:", df.columns.tolist())
-
-    time_col = None
-    for col in df.columns:
-        if col.lower() == 'time':
-            time_col = col
-            break
-
-    glucose_col = None
-    for col in df.columns:
-        if col.lower() in ['glucose_level', 'glucose', 'glc']:
-            glucose_col = col
-            break
-
-    if not time_col or not glucose_col:
-        raise ValueError(f"CSV file must contain time and glucose_level columns. Found: {df.columns.tolist()}")
-
-    col_mapping = {
-        'time': time_col,
-        'glucose_level': glucose_col
-    }
-
-    df.attrs['column_mapping'] = col_mapping
-    print(f"Using '{time_col}' as time column and '{glucose_col}' as glucose column")
-
-    datetime_formats = ['%d/%m/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S']
-    for dt_format in datetime_formats:
-        try:
-            df[time_col] = pd.to_datetime(df[time_col], format=dt_format)
-            print(f"Parsed dates using format: {dt_format}")
-            break
-        except:
-            continue
-
-    if not pd.api.types.is_datetime64_dtype(df[time_col]):
-        print("Using flexible datetime parser")
-        df[time_col] = pd.to_datetime(df[time_col], errors='coerce')
-
-    if df[time_col].isna().all():
-        raise ValueError(f"Could not parse '{time_col}' column as datetime")
-
-    df = df.sort_values(by=time_col)
-    return df
-
-
-def clean_infinite_values(df):
-    inf_count = np.isinf(df.select_dtypes(include=[np.number])).sum().sum()
-
-    if inf_count > 0:
-        print(f"Warning: Found {inf_count} infinity values in the dataset. Replacing with NaN.")
-        df = df.replace([np.inf, -np.inf], np.nan)
-
-    for col in df.select_dtypes(include=[np.number]).columns:
-        extreme_mask = (df[col].abs() > 1e10) & df[col].notna()
-        extreme_count = extreme_mask.sum()
-
-        if extreme_count > 0:
-            print(f"Warning: Found {extreme_count} extreme values in column '{col}'. Capping to reasonable values.")
-            df.loc[extreme_mask, col] = df.loc[extreme_mask, col].apply(
-                lambda x: 1e10 if x > 0 else -1e10
-            )
-
-    return df
-
-
-def encode_icd9_code(code):
-    if pd.isna(code) or not isinstance(code, str) or len(code) < 3:
-        return 0.0, 0.0
-
-    try:
-        category = float(code[:3])
-    except ValueError:
-        category = 0.0
-
-    if len(code) > 3:
-        hash_val = int(hashlib.md5(code[3:].encode()).hexdigest(), 16)
-        subcategory = float(hash_val % 1000) / 1000
-    else:
-        subcategory = 0.0
-
-    return category, subcategory
+from common_utils import clean_infinite_values, encode_icd9_code, get_column_name
 
 
 def create_enhanced_patient_features(patient_df):
+    """
+    Extract features from patient data for XGBoost model.
+
+    :param patient_df: Patient dataframe with glucose readings
+    :type patient_df: pandas.DataFrame
+    :returns: Expanded DataFrame with calculated features
+    :rtype: pandas.DataFrame
+    """
     df = patient_df.copy()
-    col_mapping = df.attrs.get('column_mapping', {})
-
-    if not col_mapping:
-        print("Warning: No column mapping found, using case-insensitive matching")
-        col_mapping = {col.upper(): col for col in df.columns}
-
-    def get_col(expected_col):
-        if expected_col in col_mapping and col_mapping[expected_col] in df.columns:
-            return col_mapping[expected_col]
-        elif expected_col in df.columns:
-            return expected_col
-        elif expected_col.lower() in df.columns:
-            return expected_col.lower()
-        return None
 
     # Get essential column names
-    glc_col = get_col('GLC')
-    timer_col = get_col('TIMER')
-    hadm_id_col = get_col('HADM_ID')
-    icustay_id_col = get_col('ICUSTAY_ID')
+    glc_col = get_column_name(df, 'GLC')
+    timer_col = get_column_name(df, 'TIMER')
+    hadm_id_col = get_column_name(df, 'HADM_ID')
+    icustay_id_col = get_column_name(df, 'ICUSTAY_ID')
 
     if not glc_col or not timer_col:
         print(f"Error: Required columns not found. GLC: {glc_col}, TIMER: {timer_col}")
@@ -240,24 +78,26 @@ def create_enhanced_patient_features(patient_df):
 
     # Handle gender
     gender_feature = 0  # Default
-    gender_col = get_col('GENDER')
-    if gender_col:
+    gender_col = get_column_name(df, 'GENDER')
+    if gender_col and len(df) > 0:
         gender = first_row.get(gender_col, 'Unknown')
         gender_feature = 1 if gender == 'M' else 0 if gender == 'F' else 0.5
 
     # Handle age
     age_feature = 50  # Default middle age
-    age_col = get_col('ADMISSION_AGE')
-    if age_col:
+    age_col = get_column_name(df, 'ADMISSION_AGE')
+    if age_col and len(df) > 0:
         age = first_row.get(age_col)
         if not pd.isna(age) and isinstance(age, (int, float)):
-            age_feature = min(max(age, 0), 120)
+            age_feature = min(max(age, 0), 120) / 120  # Normalize 0-1
+        else:
+            age_feature = 0.5  # Default
 
     # Handle ICD9 code
     icd9_category = 0
     icd9_subcategory = 0
-    icd9_col = get_col('ICD9_CODE')
-    if icd9_col:
+    icd9_col = get_column_name(df, 'ICD9_CODE')
+    if icd9_col and len(df) > 0:
         icd9_code = first_row.get(icd9_col)
         if not pd.isna(icd9_code) and isinstance(icd9_code, str):
             icd9_category, icd9_subcategory = encode_icd9_code(icd9_code)
@@ -274,6 +114,16 @@ def create_enhanced_patient_features(patient_df):
         icustay_id = first_row.get(icustay_id_col, 0)
         if not pd.isna(icustay_id):
             icustay_id_feature = int(icustay_id) % 1000
+
+    # Get column names for insulin analysis
+    event_col = get_column_name(df, 'EVENT')
+    input_col = get_column_name(df, 'INPUT')
+    insulintype_col = get_column_name(df, 'INSULINTYPE')
+
+    if not event_col or not input_col or not insulintype_col:
+        event_col = event_col or 'event'
+        input_col = input_col or 'input'
+        insulintype_col = insulintype_col or 'insulintype'
 
     # Process each glucose reading
     for i in tqdm(range(len(glucose_df) - 1), desc="Creating features"):
@@ -318,16 +168,6 @@ def create_enhanced_patient_features(patient_df):
         if pd.isna(current_max): current_max = current_glucose
         if pd.isna(current_range): current_range = 0
         if pd.isna(current_acceleration): current_acceleration = 0
-
-        # Get column names for insulin analysis
-        event_col = get_col('EVENT')
-        input_col = get_col('INPUT')
-        insulintype_col = get_col('INSULINTYPE')
-
-        if not event_col or not input_col or not insulintype_col:
-            event_col = event_col or 'event'
-            input_col = input_col or 'input'
-            insulintype_col = insulintype_col or 'insulintype'
 
         # Enhanced insulin analysis with time windows
         recent_insulin_events = []
@@ -412,14 +252,14 @@ def create_enhanced_patient_features(patient_df):
         is_weekend = glucose_df.iloc[i].get('is_weekend', 0)
 
         # Get additional column names
-        subject_id_col = get_col('SUBJECT_ID')
-        glcsource_col = get_col('GLCSOURCE')
+        subject_id_col = get_column_name(df, 'SUBJECT_ID')
+        glcsource_col = get_column_name(df, 'GLCSOURCE')
 
         # Assemble enhanced feature row
         row = {
             'SUBJECT_ID': patient_df[subject_id_col].iloc[0] if subject_id_col else 0,
-            'HADM_ID_FEATURE': hadm_id_feature,  # Added hospital admission ID feature
-            'ICUSTAY_ID_FEATURE': icustay_id_feature,  # Added ICU stay ID feature
+            'HADM_ID_FEATURE': hadm_id_feature,
+            'ICUSTAY_ID_FEATURE': icustay_id_feature,
             'current_glucose': current_glucose,
             'glucose_source': 1 if glcsource_col and glucose_df.iloc[i][glcsource_col] == 'BLOOD' else 0,
             'prev_glucose_1': past_glucose_values[-1] if not np.isnan(past_glucose_values[-1]) else current_glucose,
@@ -493,7 +333,7 @@ def create_enhanced_patient_features(patient_df):
         }
 
         # Get column for input hours
-        input_hrs_col = get_col('INPUT_HRS')
+        input_hrs_col = get_column_name(df, 'INPUT_HRS')
 
         # If INPUT_HRS is available, add insulin duration features
         all_insulin_events = pd.DataFrame()
@@ -519,7 +359,7 @@ def create_enhanced_patient_features(patient_df):
             row['latest_insulin_duration'] = latest_insulin_duration
 
         # If INFXSTOP is available, add features related to infusion stopping
-        infxstop_col = get_col('INFXSTOP')
+        infxstop_col = get_column_name(df, 'INFXSTOP')
         if infxstop_col:
             # Get recent infusion stop events
             recent_infxstop = df[(df[timer_col] < current_time) & (~pd.isna(df[infxstop_col]))].tail(3)
@@ -563,9 +403,9 @@ def create_enhanced_patient_features(patient_df):
                 row['infxstop_count_24h'] = 0
 
         # Add new features: Time differences between various timestamps
-        starttime_col = get_col('STARTTIME')
-        endtime_col = get_col('ENDTIME')
-        glctimer_col = get_col('GLCTIMER')
+        starttime_col = get_column_name(df, 'STARTTIME')
+        endtime_col = get_column_name(df, 'ENDTIME')
+        glctimer_col = get_column_name(df, 'GLCTIMER')
 
         if starttime_col and timer_col:
             start_time = glucose_df.iloc[i].get(starttime_col)
@@ -595,6 +435,14 @@ def create_enhanced_patient_features(patient_df):
 
 
 def create_prediction_features(patient_df):
+    """
+    Create feature set for making predictions with an existing XGBoost model.
+
+    :param patient_df: Patient dataframe with glucose readings
+    :type patient_df: pandas.DataFrame
+    :returns: Features dataframe ready for prediction
+    :rtype: pandas.DataFrame
+    """
     df = patient_df.copy()
     features_list = []
 
@@ -641,8 +489,8 @@ def create_prediction_features(patient_df):
     age_feature = 50
     icd9_category = 0
     icd9_subcategory = 0
-    hadm_id_feature = 0  # Added
-    icustay_id_feature = 0  # Added
+    hadm_id_feature = 0
+    icustay_id_feature = 0
 
     for i in range(len(df) - 4):
         sequence = df.iloc[i:i + 5]
@@ -760,19 +608,17 @@ def create_prediction_features(patient_df):
 
 
 def prepare_dataset(df):
+    """
+    Prepare the complete dataset for XGBoost training by processing all patients.
+
+    :param df: DataFrame with all patient data
+    :type df: pandas.DataFrame
+    :returns: Features ready for XGBoost training
+    :rtype: pandas.DataFrame
+    """
     all_features = pd.DataFrame()
-    col_mapping = df.attrs.get('column_mapping', {})
 
-    def get_col(expected_col):
-        if expected_col in col_mapping and col_mapping[expected_col] in df.columns:
-            return col_mapping[expected_col]
-        elif expected_col in df.columns:
-            return expected_col
-        elif expected_col.lower() in df.columns:
-            return expected_col.lower()
-        return None
-
-    subject_id_col = get_col('SUBJECT_ID')
+    subject_id_col = get_column_name(df, 'SUBJECT_ID')
 
     if not subject_id_col:
         print("Warning: Could not find SUBJECT_ID column. Using all data as one patient.")
@@ -799,6 +645,20 @@ def prepare_dataset(df):
 
 
 def evaluate_model(model, X_test, y_test, model_name="Model"):
+    """
+    Evaluate a trained XGBoost model and print performance metrics.
+
+    :param model: Trained XGBoost model
+    :type model: xgboost.XGBRegressor
+    :param X_test: Test features
+    :type X_test: pandas.DataFrame
+    :param y_test: True target values
+    :type y_test: pandas.Series
+    :param model_name: Name to display in output
+    :type model_name: str
+    :returns: Dict with evaluation metrics
+    :rtype: dict
+    """
     y_pred = model.predict(X_test)
 
     rmse = np.sqrt(mean_squared_error(y_test, y_pred))
@@ -834,7 +694,7 @@ def evaluate_model(model, X_test, y_test, model_name="Model"):
             sorted_importance = sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
 
             print("\nFeature Importance:")
-            for feature, imp in sorted_importance:
+            for feature, imp in sorted_importance[:10]:  # Top 10 features
                 print(f"{feature}: {imp:.4f}")
 
     return {
@@ -848,6 +708,18 @@ def evaluate_model(model, X_test, y_test, model_name="Model"):
 
 
 def plot_model_evaluation(y_test, y_pred, title="Model Evaluation", save_png=False):
+    """
+    Plot actual vs predicted values and error distribution.
+
+    :param y_test: True target values
+    :type y_test: numpy.ndarray or pandas.Series
+    :param y_pred: Predicted values
+    :type y_pred: numpy.ndarray
+    :param title: Plot title
+    :type title: str
+    :param save_png: Whether to save plot as PNG
+    :type save_png: bool
+    """
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
 
     ax1.scatter(y_test, y_pred, alpha=0.5)
@@ -877,6 +749,16 @@ def plot_model_evaluation(y_test, y_pred, title="Model Evaluation", save_png=Fal
 
 
 def train_enhanced_glucose_models(features_df, save_dir='models'):
+    """
+    Train XGBoost models for glucose prediction at different time horizons.
+
+    :param features_df: DataFrame with extracted features
+    :type features_df: pandas.DataFrame
+    :param save_dir: Directory to save models
+    :type save_dir: str
+    :returns: Tuple of (models, quantile_models)
+    :rtype: tuple(dict, dict)
+    """
     features_df = clean_infinite_values(features_df)
 
     models = {}
@@ -887,7 +769,7 @@ def train_enhanced_glucose_models(features_df, save_dir='models'):
                         and col.upper() != 'SUBJECT_ID'
                         and col.lower() != 'subject_id']
 
-    print(f"Training with {len(all_feature_cols)} features: {all_feature_cols}")
+    print(f"Training with {len(all_feature_cols)} features")
     all_metrics = {}
 
     if not os.path.exists(save_dir):
@@ -1058,6 +940,14 @@ def train_enhanced_glucose_models(features_df, save_dir='models'):
 
 
 def load_models(model_dir='models'):
+    """
+    Load XGBoost models from disk.
+
+    :param model_dir: Directory containing saved models
+    :type model_dir: str
+    :returns: Tuple of (models, quantile_models)
+    :rtype: tuple(dict, dict)
+    """
     models = {}
     quantile_models = {}
 
@@ -1093,6 +983,18 @@ def load_models(model_dir='models'):
 
 
 def predict_for_patient(patient_df, models, quantile_models):
+    """
+    Generate predictions for a patient using trained XGBoost models.
+
+    :param patient_df: DataFrame with patient data
+    :type patient_df: pandas.DataFrame
+    :param models: Dict of trained models for each horizon
+    :type models: dict
+    :param quantile_models: Dict of quantile models for confidence intervals
+    :type quantile_models: dict
+    :returns: DataFrame with predictions
+    :rtype: pandas.DataFrame
+    """
     features_df = create_prediction_features(patient_df)
 
     if len(features_df) == 0:
@@ -1184,6 +1086,16 @@ def predict_for_patient(patient_df, models, quantile_models):
 
 
 def plot_patient_predictions(patient_df, predictions_df, save_png=False):
+    """
+    Plot patient glucose data with predictions and confidence intervals.
+
+    :param patient_df: DataFrame with patient data
+    :type patient_df: pandas.DataFrame
+    :param predictions_df: DataFrame with predictions
+    :type predictions_df: pandas.DataFrame
+    :param save_png: Whether to save plot as PNG
+    :type save_png: bool
+    """
     plt.figure(figsize=(12, 8))
 
     col_mapping = patient_df.attrs.get('column_mapping', {})
@@ -1249,7 +1161,7 @@ def plot_patient_predictions(patient_df, predictions_df, save_png=False):
                  horizontalalignment='center', verticalalignment='center',
                  transform=plt.gca().transAxes, fontsize=14, color='red')
 
-    plt.title('Glucose Predictions with 90% Confidence Intervals')
+    plt.title('XGBoost Glucose Predictions with 90% Confidence Intervals')
     plt.xlabel('Time')
     plt.ylabel('Glucose Level (mg/dL)')
     plt.legend()
@@ -1257,18 +1169,23 @@ def plot_patient_predictions(patient_df, predictions_df, save_png=False):
     plt.gcf().autofmt_xdate()
 
     if save_png:
-        plt.savefig('glucose_predictions.png', dpi=300, bbox_inches='tight')
-        print("Plot saved as glucose_predictions.png")
+        plt.savefig('xgboost_glucose_predictions.png', dpi=300, bbox_inches='tight')
+        print("Plot saved as xgboost_glucose_predictions.png")
 
     plt.show()
 
 
-def export_predictions(predictions_df, output_file=OUTPUT_FILE):
-    predictions_df.to_csv(output_file, index=False)
-    print(f"Predictions exported to {output_file}")
-
-
 def evaluate_predictions(predictions_df, actual_df):
+    """
+    Evaluate prediction accuracy against actual values.
+
+    :param predictions_df: DataFrame with predictions
+    :type predictions_df: pandas.DataFrame
+    :param actual_df: DataFrame with actual values
+    :type actual_df: pandas.DataFrame
+    :returns: Dict with evaluation results
+    :rtype: dict
+    """
     evaluation_results = {}
 
     col_mapping = actual_df.attrs.get('column_mapping', {})
@@ -1339,7 +1256,21 @@ def evaluate_predictions(predictions_df, actual_df):
     return evaluation_results
 
 
-def process_patient_data(patient_file, model_dir='models', output_file=OUTPUT_FILE):
+def process_patient_data(patient_file, model_dir='models', output_file='glucose_predictions.csv'):
+    """
+    Process patient data to generate predictions with XGBoost models.
+
+    :param patient_file: Path to patient data CSV
+    :type patient_file: str
+    :param model_dir: Directory containing models
+    :type model_dir: str
+    :param output_file: Path to save predictions
+    :type output_file: str
+    :returns: DataFrame with predictions
+    :rtype: pandas.DataFrame
+    """
+    from common_utils import load_patient_data, export_predictions
+
     print(f"Loading patient data from {patient_file}...")
     patient_df = load_patient_data(patient_file)
 
@@ -1359,16 +1290,6 @@ def process_patient_data(patient_file, model_dir='models', output_file=OUTPUT_FI
 
     if len(predictions_df) == 0:
         print("Error: Could not generate any predictions")
-        return None
-
-    has_valid_prediction = False
-    for hours in [1, 2, 3]:
-        if f'predicted_{hours}hr' in predictions_df.columns:
-            has_valid_prediction = True
-            break
-
-    if not has_valid_prediction:
-        print("Error: No valid predictions were generated for any time horizon")
         return None
 
     export_predictions(predictions_df, output_file)
@@ -1421,6 +1342,18 @@ def process_patient_data(patient_file, model_dir='models', output_file=OUTPUT_FI
 
 
 def train_models(training_file, model_dir='models'):
+    """
+    Train XGBoost models from training data.
+
+    :param training_file: Path to training data CSV
+    :type training_file: str
+    :param model_dir: Directory to save models
+    :type model_dir: str
+    :returns: Tuple of (models, quantile_models)
+    :rtype: tuple(dict, dict)
+    """
+    from common_utils import load_and_preprocess_training_data
+
     print(f"Loading training data from {training_file}...")
     df = load_and_preprocess_training_data(training_file)
 
@@ -1432,55 +1365,3 @@ def train_models(training_file, model_dir='models'):
 
     print(f"Models saved to {model_dir} directory")
     return models, quantile_models
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description='Enhanced Glucose Prediction System')
-    parser.add_argument('--train', action='store_true', help='Train new models')
-    parser.add_argument('--predict', action='store_true', help='Make predictions on patient data')
-    parser.add_argument('--training-file', type=str, default='glucose_insulin_smallest.csv',
-                        help='CSV file with training data')
-    parser.add_argument('--patient-file', type=str, help='CSV file with patient data (time and glucose_level columns)')
-    parser.add_argument('--model-dir', type=str, default='models', help='Directory for model storage')
-    parser.add_argument('--model_outputs-file', type=str, default=OUTPUT_FILE,
-                        help='Output file for predictions')
-
-    args = parser.parse_args()
-
-    if args.train and args.predict:
-        print("Error: Cannot both train and predict at the same time. Please choose one operation.")
-        exit(1)
-
-    if not args.train and not args.predict:
-        print("Error: Must specify either --train or --predict")
-        parser.print_help()
-        exit(1)
-
-    if args.train:
-        if not args.training_file:
-            print("Error: Training file must be specified with --training-file")
-            exit(1)
-
-        print(f"Starting model training using data from {args.training_file}")
-        train_models(args.training_file, args.model_dir)
-        print("Training complete!")
-
-    if args.predict:
-        if not args.patient_file:
-            print("Error: Patient file must be specified with --patient-file")
-            exit(1)
-
-        print(f"Making predictions for patient data in {args.patient_file}")
-        predictions = process_patient_data(
-            args.patient_file,
-            args.model_dir,
-            args.output_file
-        )
-
-        if predictions is not None:
-            print(f"Predictions saved to {args.output_file}")
-            print("Prediction complete!")
-        else:
-            print("Prediction failed. Please check the error messages above.")
