@@ -14,7 +14,7 @@ from sklearn.inspection import permutation_importance
 # Define colors for consistent visualization
 COLORS = {
     'xgboost': '#ff7f0e',  # Orange
-    'lstm': '#1f77b4',  # Blue
+    'lstmutils': '#1f77b4',  # Blue
     'ensemble': '#2ca02c'  # Green
 }
 
@@ -27,7 +27,7 @@ def plot_feature_importance(model, feature_names, model_type='xgboost',
     :param model: Trained model with feature_importances_ attribute
     :param feature_names: List of feature names
     :type feature_names: list
-    :param model_type: Type of model ('xgboost', 'lstm')
+    :param model_type: Type of model ('xgboost', 'lstmutils')
     :type model_type: str
     :param top_n: Number of top features to show
     :type top_n: int
@@ -79,7 +79,7 @@ def generate_permutation_importance(model, X_test, y_test, feature_names,
     :type y_test: numpy.ndarray or pandas.Series
     :param feature_names: List of feature names
     :type feature_names: list
-    :param model_type: Type of model ('xgboost', 'lstm')
+    :param model_type: Type of model ('xgboost', 'lstmutils')
     :type model_type: str
     :param n_repeats: Number of times to permute each feature
     :type n_repeats: int
@@ -147,7 +147,7 @@ def generate_shap_summary(model, X_sample, feature_names, model_type='xgboost',
     :type X_sample: numpy.ndarray or pandas.DataFrame
     :param feature_names: List of feature names
     :type feature_names: list
-    :param model_type: Type of model ('xgboost', 'lstm')
+    :param model_type: Type of model ('xgboost', 'lstmutils')
     :type model_type: str
     :param max_display: Maximum number of features to display
     :type max_display: int
@@ -203,7 +203,7 @@ def explain_single_prediction(model, X_instance, feature_names, model_type='xgbo
     :type X_instance: numpy.ndarray or pandas.Series
     :param feature_names: List of feature names
     :type feature_names: list
-    :param model_type: Type of model ('xgboost', 'lstm')
+    :param model_type: Type of model ('xgboost', 'lstmutils')
     :type model_type: str
     :param output_dir: Directory to save outputs
     :type output_dir: str
@@ -321,7 +321,7 @@ def generate_explanation_report(model, X_train, X_test, y_test, feature_names,
     :type y_test: numpy.ndarray or pandas.Series
     :param feature_names: List of feature names
     :type feature_names: list
-    :param model_type: Type of model ('xgboost', 'lstm')
+    :param model_type: Type of model ('xgboost', 'lstmutils')
     :type model_type: str
     :param output_dir: Directory to save outputs
     :type output_dir: str

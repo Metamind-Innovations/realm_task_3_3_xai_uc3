@@ -26,7 +26,7 @@ def setup_arg_parser():
     parser.add_argument('--predict', action='store_true', help='Make predictions on patient data')
 
     # Model type selection
-    parser.add_argument('--model-type', type=str, choices=['xgboost', 'lstm', 'ensemble'],
+    parser.add_argument('--model-type', type=str, choices=['xgboost', 'lstmutils', 'ensemble'],
                         default='xgboost', help='Type of model to use (default: xgboost)')
 
     # File paths
@@ -35,7 +35,7 @@ def setup_arg_parser():
 
     # Model directories
     parser.add_argument('--xgboost-dir', type=str, default='xgboost_models', help='Directory for XGBoost model storage')
-    parser.add_argument('--lstm-dir', type=str, default='lstm_models', help='Directory for LSTM model storage')
+    parser.add_argument('--lstmutils-dir', type=str, default='lstm_models', help='Directory for LSTM model storage')
 
     # Output options
     parser.add_argument('--output-file', type=str, help='Output file for predictions (default is auto-generated)')
@@ -100,7 +100,7 @@ def generate_output_filename(args):
 
     if args.model_type == 'xgboost':
         filename = f"xgboost_predictions_{timestamp}.csv"
-    elif args.model_type == 'lstm':
+    elif args.model_type == 'lstmutils':
         filename = f"lstm_predictions_{timestamp}.csv"
     elif args.model_type == 'ensemble':
         filename = f"ensemble_predictions_{timestamp}.csv"
@@ -164,7 +164,7 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
 
     # Plot predictions for different horizons
     colors = {'xgboost': ['red', 'darkred', 'indianred'],
-              'lstm': ['green', 'darkgreen', 'lightgreen']}
+              'lstmutils': ['green', 'darkgreen', 'lightgreen']}
 
     for hours in [1, 2, 3]:
         # XGBoost predictions
@@ -184,7 +184,7 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
             plt.scatter(
                 lstm_predictions[f'prediction_time_{hours}hr'],
                 lstm_predictions[f'predicted_{hours}hr'],
-                color=colors['lstm'][hours - 1],
+                color=colors['lstmutils'][hours - 1],
                 label=f'LSTM {hours}-hour',
                 marker='x',
                 s=50,
@@ -350,7 +350,7 @@ def main():
             )
             print("XGBoost training complete!")
 
-        if args.model_type == 'lstm' or args.model_type == 'ensemble':
+        if args.model_type == 'lstmutils' or args.model_type == 'ensemble':
             print(f"Starting LSTM model training using data from {args.training_file}")
             lstm_models, lstm_scalers, lstm_results = train_lstm_models(
                 args.training_file,
@@ -393,7 +393,7 @@ def main():
             else:
                 print("XGBoost prediction failed. Please check the error messages above.")
 
-        elif args.model_type == 'lstm':
+        elif args.model_type == 'lstmutils':
             print(f"Making LSTM predictions for patient data in {args.patient_file}")
             predictions = process_lstm_patient_data(
                 args.patient_file,
