@@ -1,11 +1,11 @@
 import argparse
 import os
+import sys
 from datetime import datetime
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
-# Import from reorganized modules
 from common.data_loader import load_patient_data
 from lstm_utils import train_models_workflow, process_patient_data as process_lstm_patient_data, plot_lstm_predictions
 from xgboost_utils import train_models as train_xgboost_models, process_patient_data as process_xgboost_patient_data, \
@@ -46,8 +46,11 @@ def setup_arg_parser():
     parser.add_argument('--sequence-length', type=int, help='Sequence length for LSTM (default: adaptive)')
     parser.add_argument('--compare-models', action='store_true', help='Compare predictions from multiple models')
 
-    # Future XAI integration
+    # XAI options
     parser.add_argument('--xai', action='store_true', help='Generate model explanations (requires XAI module)')
+    parser.add_argument('--xai-dir', type=str, default='xai_reports', help='Directory to save XAI reports')
+    parser.add_argument('--xai-global', action='store_true', help='Generate global model explanations')
+    parser.add_argument('--xai-local', action='store_true', help='Generate local (per-prediction) explanations')
 
     return parser
 
@@ -72,14 +75,12 @@ def validate_args(args):
     if args.predict and not args.patient_file:
         raise ValueError("Patient file must be specified with --patient-file when using --predict")
 
-    # Check if files exist
     if args.training_file and not os.path.exists(args.training_file):
         raise ValueError(f"Training file not found: {args.training_file}")
 
     if args.patient_file and not os.path.exists(args.patient_file):
         raise ValueError(f"Patient file not found: {args.patient_file}")
 
-    # Create output directory if it doesn't exist
     if args.output_dir and not os.path.exists(args.output_dir):
         os.makedirs(args.output_dir)
 
@@ -149,20 +150,16 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
         print("Error: Could not generate predictions from one or both models")
         return
 
-    # Plot comparisons
     print("\nPlotting comparison of model predictions...")
     plt.figure(figsize=(15, 10))
 
-    # Get column names
     col_mapping = patient_df.attrs.get('column_mapping', {})
     time_col = col_mapping.get('time', 'time')
     glucose_col = col_mapping.get('glucose_level', 'glucose_level')
 
-    # Plot actual glucose values
     plt.plot(patient_df[time_col], patient_df[glucose_col], 'b-', label='Actual Glucose', linewidth=2)
     plt.scatter(patient_df[time_col], patient_df[glucose_col], color='blue', s=30, alpha=0.5)
 
-    # Plot predictions for different horizons
     colors = {'xgboost': ['red', 'darkred', 'indianred'],
               'lstm': ['green', 'darkgreen', 'lightgreen']}
 
@@ -205,7 +202,6 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
 
     plt.show()
 
-    # Create combined predictions file
     print("\nCreating combined predictions file...")
 
     # Merge the predictions from both models
@@ -214,18 +210,14 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
     combined_df['current_glucose'] = xgboost_predictions['current_glucose']
 
     for hours in [1, 2, 3]:
-        # Check if both models have predictions for this horizon
         if (f'predicted_{hours}hr' in xgboost_predictions.columns and
                 f'predicted_{hours}hr' in lstm_predictions.columns):
 
-            # Get prediction times from XGBoost
             time_col = f'prediction_time_{hours}hr'
             pred_times = xgboost_predictions[time_col]
 
-            # Add XGBoost predictions
             combined_df[f'xgboost_predicted_{hours}hr'] = xgboost_predictions[f'predicted_{hours}hr']
 
-            # Find matching LSTM predictions by time
             lstm_times = lstm_predictions[time_col]
             lstm_values = lstm_predictions[f'predicted_{hours}hr']
 
@@ -245,17 +237,13 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
                                                                    combined_df[f'lstm_predicted_{hours}hr']
                                                            ) / 2
 
-            # Add prediction time
             combined_df[f'prediction_time_{hours}hr'] = pred_times
 
-    # Save combined predictions
     combined_output = os.path.join(output_dir, "ensemble_predictions.csv")
     combined_df.to_csv(combined_output, index=False)
     print(f"Combined predictions saved to {combined_output}")
 
-    # Add basic evaluation if we have future data
     try:
-        # Find the latest prediction time
         latest_pred_time = None
         for hours in [3, 2, 1]:
             time_col = f'prediction_time_{hours}hr'
@@ -275,7 +263,6 @@ def compare_model_predictions(patient_file, xgboost_dir='xgboost_models', lstm_d
                 pred_col_ensemble = f'ensemble_predicted_{hours}hr'
 
                 if pred_col_xgb in combined_df.columns and pred_col_lstm in combined_df.columns:
-                    # Evaluate predictions using RMSE
                     actual_values = []
 
                     time_col = f'prediction_time_{hours}hr'
@@ -427,14 +414,132 @@ def main():
             )
             print("Ensemble prediction complete!")
 
-    # Placeholder for future XAI integration
     if args.xai:
         try:
-            from utils.xai_utils import generate_explanation_report
-            print("Generating model explanations...")
-            # Implementation would go here
-        except ImportError:
-            print("XAI functionality will be available in a future update.")
+            # Try to import the XAI module
+            sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+            from xai_utils import generate_explanation_report
+            print("\nGenerating model explanations...")
+
+            xai_output_dir = args.xai_dir if args.xai_dir else os.path.join(args.output_dir, 'xai_reports')
+
+            # Determine global/local explanation flags
+            include_global = args.xai_global if (args.xai_global or args.xai_local) else True
+            include_local = args.xai_local if (args.xai_global or args.xai_local) else True
+
+            if args.predict:
+                if args.model_type == 'xgboost':
+                    print("Generating XGBoost model explanations...")
+
+                    # Load data and models
+                    patient_df = load_patient_data(args.patient_file)
+
+                    from xgboost_utils.model import load_models
+                    models, quantile_models = load_models(args.xgboost_dir)
+
+                    # Process feature data for explanation
+                    from xgboost_utils.feature_engineering import create_prediction_features
+                    features_df = create_prediction_features(patient_df)
+
+                    # Generate explanation report
+                    generate_explanation_report(
+                        'xgboost',
+                        models,
+                        patient_data=patient_df,
+                        features_data=features_df,
+                        prediction_results=predictions,  # Using the predictions made earlier
+                        output_dir=xai_output_dir,
+                        include_global_explanation=include_global,
+                        include_local_explanations=include_local
+                    )
+
+                    print("XGBoost explanations generated successfully!")
+
+                elif args.model_type == 'lstm':
+                    print("Generating LSTM model explanations...")
+
+                    # Load data and models
+                    patient_df = load_patient_data(args.patient_file)
+
+                    from lstm_utils.model import load_lstm_models
+                    models, scalers = load_lstm_models(args.lstm_dir)
+
+                    # Process sequences for LSTM explanation
+                    from lstm_utils.data_processor import prepare_prediction_sequences
+                    sequence_length = args.sequence_length
+                    sequences, timestamps = prepare_prediction_sequences(patient_df, sequence_length)
+
+                    # Generate explanation report
+                    generate_explanation_report(
+                        'lstm',
+                        models,
+                        patient_data=patient_df,
+                        features_data=sequences,
+                        prediction_results=predictions,  # Using the predictions made earlier
+                        output_dir=xai_output_dir,
+                        include_global_explanation=include_global,
+                        include_local_explanations=include_local
+                    )
+
+                    print("LSTM explanations generated successfully!")
+
+                elif args.model_type == 'ensemble':
+                    print("Generating explanations for ensemble models...")
+
+                    # Handle ensemble case by explaining both models
+                    patient_df = load_patient_data(args.patient_file)
+
+                    # XGBoost explanation
+                    print("\n1. Generating XGBoost explanations...")
+                    from xgboost_utils.model import load_models
+                    from xgboost_utils.feature_engineering import create_prediction_features
+
+                    xgboost_models, xgboost_quantiles = load_models(args.xgboost_dir)
+                    features_df = create_prediction_features(patient_df)
+
+                    generate_explanation_report(
+                        'xgboost',
+                        xgboost_models,
+                        patient_data=patient_df,
+                        features_data=features_df,
+                        prediction_results=predictions,
+                        output_dir=os.path.join(xai_output_dir, 'xgboost'),
+                        include_global_explanation=include_global,
+                        include_local_explanations=include_local
+                    )
+
+                    # LSTM explanation
+                    print("\n2. Generating LSTM explanations...")
+                    from lstm_utils.model import load_lstm_models
+                    from lstm_utils.data_processor import prepare_prediction_sequences
+
+                    lstm_models, lstm_scalers = load_lstm_models(args.lstm_dir)
+                    sequence_length = args.sequence_length
+                    sequences, timestamps = prepare_prediction_sequences(patient_df, sequence_length)
+
+                    generate_explanation_report(
+                        'lstm',
+                        lstm_models,
+                        patient_data=patient_df,
+                        features_data=sequences,
+                        prediction_results=predictions,
+                        output_dir=os.path.join(xai_output_dir, 'lstm'),
+                        include_global_explanation=include_global,
+                        include_local_explanations=include_local
+                    )
+
+                    print("\nEnsemble model explanations generated successfully!")
+            else:
+                print("XAI functionality requires model predictions. Please run with --predict flag")
+
+        except ImportError as e:
+            print(f"Error importing XAI utilities: {str(e)}")
+            print("Please make sure you have the required packages installed:")
+            print("  - shap")
+            print("  - matplotlib")
+            print("  - pandas")
+            print("  - tensorflow (for LSTM models)")
+            print("\nInstall with: pip install shap matplotlib pandas tensorflow")
 
     return 0
 
