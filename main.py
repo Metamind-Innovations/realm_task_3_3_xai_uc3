@@ -386,7 +386,8 @@ def main():
                 args.patient_file,
                 args.lstm_dir,
                 output_file,
-                sequence_length=args.sequence_length
+                sequence_length=args.sequence_length,
+                skip_plotting=True
             )
 
             if predictions is not None:
@@ -395,9 +396,13 @@ def main():
                 if args.save_plots:
                     patient_df = load_patient_data(args.patient_file)
                     plot_path = output_file.replace('.csv', '.png')
-                    plt.figure(figsize=(12, 8))
-                    plot_lstm_predictions(patient_df, predictions, save_png=True)
-                    print(f"Plot saved to {plot_path}")
+
+                    try:
+                        from lstm_utils.visualization import plot_predictions
+                        plot_predictions(patient_df, predictions, save_png=True)
+                        print(f"Plot saved to {plot_path}")
+                    except Exception as e:
+                        print(f"Error plotting predictions: {str(e)}")
 
                 print("LSTM prediction complete!")
             else:

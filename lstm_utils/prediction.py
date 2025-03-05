@@ -58,16 +58,47 @@ def predict_glucose_with_lstm(patient_df, models, scalers, sequence_length=10):
         predictions_df[f'predicted_{hours}hr'] = y_pred
         predictions_df[f'prediction_time_{hours}hr'] = pred_times
 
-        # Calculate confidence intervals
-        std_dev = np.std(y_pred) * 1.96  # ~95% confidence
-        predictions_df[f'lower_bound_{hours}hr'] = y_pred - std_dev
-        predictions_df[f'upper_bound_{hours}hr'] = y_pred + std_dev
+        # For single predictions, use a percentage-based range
+        if len(y_pred) == 1:
+            ci_percentage = 0.15  # Typical glucose reading fluctuation is around 10-15%
+            base_value = y_pred[0]
+            lower_bound = base_value * (1 - ci_percentage)
+            upper_bound = base_value * (1 + ci_percentage)
+
+            predictions_df[f'lower_bound_{hours}hr'] = lower_bound
+            predictions_df[f'upper_bound_{hours}hr'] = upper_bound
+        else:
+            # For multiple predictions, use a combination of:
+            # 1. Model uncertainty estimate
+            # 2. Historical glucose variability
+            # 3. Time horizon (longer horizon = wider interval)
+            base_uncertainty = 0.05 + (hours * 0.03)  # 5% + 3% per hour
+
+            lower_bounds = []
+            upper_bounds = []
+
+            for i, pred in enumerate(y_pred):
+                seq_glucose = sequences[i, :, glucose_idx]
+                if len(seq_glucose) > 1:
+                    cv = np.std(seq_glucose) / np.mean(seq_glucose) if np.mean(seq_glucose) > 0 else 0.1
+                    cv = min(max(cv, 0.05), 0.3)
+                else:
+                    cv = 0.1  # Default value
+
+                total_uncertainty = base_uncertainty + cv
+                lower_bounds.append(pred * (1 - total_uncertainty))
+                upper_bounds.append(pred * (1 + total_uncertainty))
+
+            predictions_df[f'lower_bound_{hours}hr'] = lower_bounds
+            predictions_df[f'upper_bound_{hours}hr'] = upper_bounds
 
     return predictions_df
 
 
 def process_patient_data(patient_file, model_dir='lstm_models',
-                         output_file='lstm_glucose_predictions.csv', sequence_length=None):
+                         output_file='lstm_glucose_predictions.csv',
+                         sequence_length=None,
+                         skip_plotting=False):
     """
     End-to-end process to load patient data, generate predictions, and export results.
 
@@ -81,6 +112,8 @@ def process_patient_data(patient_file, model_dir='lstm_models',
     :type output_file: str
     :param sequence_length: Override for sequence length, useful for very short inputs
     :type sequence_length: int
+    :param skip_plotting: Whether to skip automatic plotting
+    :type skip_plotting: bool
     :returns: DataFrame with predictions
     :rtype: pandas.DataFrame
     """
@@ -124,12 +157,14 @@ def process_patient_data(patient_file, model_dir='lstm_models',
     export_predictions(predictions_df, output_file)
     print(f"Predictions exported to {output_file}")
 
-    print("Plotting results...")
-    try:
-        plot_predictions(patient_df, predictions_df)
-    except Exception as e:
-        print(f"Error plotting predictions: {str(e)}")
-        print("Continuing without visualization...")
+    # Only plot if not skipped
+    if not skip_plotting:
+        print("Plotting results...")
+        try:
+            plot_predictions(patient_df, predictions_df)
+        except Exception as e:
+            print(f"Error plotting predictions: {str(e)}")
+            print("Continuing without visualization...")
 
     return predictions_df
 
