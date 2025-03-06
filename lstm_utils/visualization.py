@@ -1,9 +1,10 @@
 from datetime import datetime
 
 import matplotlib.pyplot as plt
+import os
 
 
-def plot_predictions(patient_df, predictions_df, dir, save_png=False):
+def plot_predictions(patient_df, predictions_df, output_dir=None, save_png=False):
     """
     Visualize original glucose data alongside LSTM predictions with confidence intervals.
 
@@ -14,6 +15,8 @@ def plot_predictions(patient_df, predictions_df, dir, save_png=False):
     :type patient_df: pandas.DataFrame
     :param predictions_df: Prediction results from LSTM models
     :type predictions_df: pandas.DataFrame
+    :param output_dir: Directory to save the plot, default is None (don't save)
+    :type output_dir: str or None
     :param save_png: Whether to save the plot as PNG
     :type save_png: bool
     """
@@ -90,7 +93,11 @@ def plot_predictions(patient_df, predictions_df, dir, save_png=False):
     plt.gcf().autofmt_xdate()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if save_png:
-        plt.savefig(f'{dir}/lstm_predictions_{timestamp}.png', dpi=300, bbox_inches='tight')
+    if save_png and output_dir:
+        # Create the output directory if it doesn't exist
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+        plt.savefig(f'{output_dir}/lstm_predictions_{timestamp}.png', dpi=300, bbox_inches='tight')
+        print(f"Plot saved to {output_dir}/lstm_predictions_{timestamp}.png")
 
     plt.show()

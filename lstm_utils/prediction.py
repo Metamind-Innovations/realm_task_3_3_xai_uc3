@@ -1,9 +1,11 @@
+import os
 from datetime import timedelta
 
 import numpy as np
 import pandas as pd
 
 from common.data_loader import load_patient_data, export_predictions
+from config import PREDICTION_HORIZONS
 from lstm_utils.data_processor import prepare_prediction_sequences
 from lstm_utils.model import load_lstm_models
 from lstm_utils.visualization import plot_predictions
@@ -161,13 +163,16 @@ def process_patient_data(patient_file, model_dir='lstm_models',
         print("Error: Could not generate any predictions")
         return None
 
+    # Create output directory if it doesn't exist
+    output_dir = os.path.dirname(output_file)
     export_predictions(predictions_df, output_file)
 
     # Only plot if not skipped
     if not skip_plotting:
         print("Plotting results...")
         try:
-            plot_predictions(patient_df, predictions_df)
+            # Use the updated plot_predictions function with output_dir parameter
+            plot_predictions(patient_df, predictions_df, output_dir=output_dir)
         except Exception as e:
             print(f"Error plotting predictions: {str(e)}")
             print("Continuing without visualization...")
@@ -201,7 +206,7 @@ def evaluate_predictions(predictions_df, actual_df):
         print(f"Warning: Glucose column '{glucose_col}' not found. Available columns: {actual_df.columns.tolist()}")
         glucose_col = actual_df.columns[1]
 
-    for hours in [1, 2, 3]:
+    for hours in PREDICTION_HORIZONS:
         if f'predicted_{hours}hr' not in predictions_df.columns:
             continue
 

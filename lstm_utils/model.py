@@ -2,6 +2,8 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout, BatchNormalization, Bidirectional
 from tensorflow.keras.optimizers import Adam
 
+from config import LSTM_LEARNING_RATE, MAX_SEQUENCE_LENGTH, FEATURES_TO_INCLUDE, DEFAULT_LSTM_MODEL_DIR
+
 
 def create_lstm_model(sequence_length, n_features):
     """
@@ -33,7 +35,7 @@ def create_lstm_model(sequence_length, n_features):
     ])
 
     model.compile(
-        optimizer=Adam(learning_rate=0.001),
+        optimizer=Adam(learning_rate=LSTM_LEARNING_RATE),
         loss='mean_squared_error',
         metrics=['mae']
     )
@@ -41,7 +43,7 @@ def create_lstm_model(sequence_length, n_features):
     return model
 
 
-def load_lstm_models(model_dir='lstm_models'):
+def load_lstm_models(model_dir=DEFAULT_LSTM_MODEL_DIR):
     """
     Load trained LSTM models and scalers from disk.
 
@@ -57,6 +59,7 @@ def load_lstm_models(model_dir='lstm_models'):
     import tensorflow as tf
     from tensorflow.keras.optimizers import Adam
     import pickle
+    from config import PREDICTION_HORIZONS
 
     models = {}
 
@@ -77,7 +80,6 @@ def load_lstm_models(model_dir='lstm_models'):
         return None, None
 
     found_models = False
-    PREDICTION_HORIZONS = [1, 2, 3]  # Hours into the future
 
     for hours in PREDICTION_HORIZONS:
         model_path_keras = os.path.join(model_dir, f'lstm_model_{hours}hr.keras')
@@ -104,7 +106,7 @@ def load_lstm_models(model_dir='lstm_models'):
                     try:
                         models[hours] = tf.keras.models.load_model(model_path, compile=False)
                         models[hours].compile(
-                            optimizer=Adam(learning_rate=0.001),
+                            optimizer=Adam(learning_rate=LSTM_LEARNING_RATE),
                             loss='mean_squared_error',
                             metrics=['mae']
                         )
@@ -113,13 +115,6 @@ def load_lstm_models(model_dir='lstm_models'):
                     except Exception as e2:
                         print(f"Second load attempt failed: {str(e2)}")
                         try:
-                            from lstm_utils.model import create_lstm_model
-                            MAX_SEQUENCE_LENGTH = 10
-                            FEATURES_TO_INCLUDE = [
-                                'glucose_level', 'glucose_std', 'glucose_rate', 'glucose_mean',
-                                'glucose_min', 'glucose_max', 'glucose_range', 'glucose_acceleration',
-                                'hour_of_day', 'is_daytime', 'day_of_week', 'is_weekend'
-                            ]
                             temp_model = create_lstm_model(MAX_SEQUENCE_LENGTH, len(FEATURES_TO_INCLUDE))
                             temp_model.load_weights(model_path)
                             models[hours] = temp_model

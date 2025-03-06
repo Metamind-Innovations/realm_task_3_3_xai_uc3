@@ -11,16 +11,10 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLRO
 from tqdm import tqdm
 
 from common.data_loader import load_and_preprocess_training_data, get_column_name
-from lstm_utils.data_processor import extract_patient_features, PREDICTION_HORIZONS
+from config import (MAX_SEQUENCE_LENGTH, PREDICTION_HORIZONS, FEATURES_TO_INCLUDE,
+                    LSTM_BATCH_SIZE, LSTM_EPOCHS, TEST_SIZE, VALIDATION_SIZE, RANDOM_STATE)
+from lstm_utils.data_processor import extract_patient_features
 from lstm_utils.model import create_lstm_model
-
-# Constants
-MAX_SEQUENCE_LENGTH = 10
-FEATURES_TO_INCLUDE = [
-    'glucose_level', 'glucose_std', 'glucose_rate', 'glucose_mean',
-    'glucose_min', 'glucose_max', 'glucose_range', 'glucose_acceleration',
-    'hour_of_day', 'is_daytime', 'day_of_week', 'is_weekend'
-]
 
 
 def prepare_lstm_dataset(patient_dfs, sequence_length=MAX_SEQUENCE_LENGTH):
@@ -86,7 +80,7 @@ def prepare_lstm_dataset(patient_dfs, sequence_length=MAX_SEQUENCE_LENGTH):
 
 
 def train_lstm_models(X, y, model_dir='lstm_models',
-                      test_size=0.2, validation_size=0.2, random_state=42):
+                      test_size=TEST_SIZE, validation_size=VALIDATION_SIZE, random_state=RANDOM_STATE):
     """
     Train LSTM models for different prediction horizons.
 
@@ -167,8 +161,8 @@ def train_lstm_models(X, y, model_dir='lstm_models',
         history = model.fit(
             X_train, y_train,
             validation_data=(X_val, y_val),
-            epochs=100,
-            batch_size=32,
+            epochs=LSTM_EPOCHS,
+            batch_size=LSTM_BATCH_SIZE,
             callbacks=callbacks,
             verbose=1
         )

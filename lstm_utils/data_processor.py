@@ -5,15 +5,7 @@ import pandas as pd
 
 from common.data_loader import get_column_name
 from common.preprocessing import clean_infinite_values, encode_icd9_code
-
-# Constants
-MAX_SEQUENCE_LENGTH = 10
-PREDICTION_HORIZONS = [1, 2, 3]  # Hours into the future
-FEATURES_TO_INCLUDE = [
-    'glucose_level', 'glucose_std', 'glucose_rate', 'glucose_mean',
-    'glucose_min', 'glucose_max', 'glucose_range', 'glucose_acceleration',
-    'hour_of_day', 'is_daytime', 'day_of_week', 'is_weekend'
-]
+from config import MAX_SEQUENCE_LENGTH, PREDICTION_HORIZONS, FEATURES_TO_INCLUDE
 
 
 def extract_patient_features(patient_df, is_training=False):
