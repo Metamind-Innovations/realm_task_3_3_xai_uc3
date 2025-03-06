@@ -101,8 +101,7 @@ def process_patient_data(patient_file, model_dir='lstm_models',
                          skip_plotting=False):
     """
     End-to-end process to load patient data, generate predictions, and export results.
-
-    Handles adaptive sequence length selection based on input data size.
+    Now with support for demographic information from filename.
 
     :param patient_file: Path to CSV file with patient data
     :type patient_file: str
@@ -122,6 +121,14 @@ def process_patient_data(patient_file, model_dir='lstm_models',
 
     row_count = len(patient_df)
     print(f"Input CSV has {row_count} rows")
+
+    # Check if demographics were extracted from filename
+    filename_demographics = patient_df.attrs.get('demographics_from_filename', {})
+    if filename_demographics:
+        if 'age' in filename_demographics:
+            print(f"Using age {filename_demographics['age']} from filename")
+        if 'gender' in filename_demographics:
+            print(f"Using gender '{filename_demographics['gender']}' from filename")
 
     # Set adaptive sequence length if not specified
     if sequence_length is None:
@@ -155,7 +162,6 @@ def process_patient_data(patient_file, model_dir='lstm_models',
         return None
 
     export_predictions(predictions_df, output_file)
-    print(f"Predictions exported to {output_file}")
 
     # Only plot if not skipped
     if not skip_plotting:

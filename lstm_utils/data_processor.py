@@ -77,10 +77,17 @@ def extract_patient_features(patient_df, is_training=False):
 
     demographics = {}
 
+    filename_demographics = patient_df.attrs.get('demographics_from_filename', {})
+
     gender_col = get_column_name(df, 'GENDER')
     if gender_col and len(df) > 0:
         gender = df[gender_col].iloc[0]
         demographics['gender'] = 1 if gender == 'M' else 0 if gender == 'F' else 0.5
+    elif 'gender' in filename_demographics:
+        # Use gender from filename
+        gender_str = filename_demographics['gender']
+        demographics['gender'] = 1 if gender_str.lower() == 'male' else 0 if gender_str.lower() == 'female' else 0.5
+        print(f"Using gender '{gender_str}' from filename for model input (value: {demographics['gender']})")
     else:
         demographics['gender'] = 0.5  # Default
 
@@ -91,6 +98,11 @@ def extract_patient_features(patient_df, is_training=False):
             demographics['age'] = min(max(age, 0), 120) / 120  # Normalize 0-1
         else:
             demographics['age'] = 0.5  # Default
+    elif 'age' in filename_demographics:
+        # Use age from filename
+        age = filename_demographics['age']
+        demographics['age'] = min(max(age, 0), 120) / 120  # Normalize 0-1
+        print(f"Using age {age} from filename for model input (normalized: {demographics['age']})")
     else:
         demographics['age'] = 0.5  # Default
 

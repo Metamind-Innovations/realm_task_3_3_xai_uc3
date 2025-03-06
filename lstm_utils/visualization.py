@@ -92,6 +92,5 @@ def plot_predictions(patient_df, predictions_df, dir, save_png=False):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if save_png:
         plt.savefig(f'{dir}/lstm_predictions_{timestamp}.png', dpi=300, bbox_inches='tight')
-        print("Plot saved as lstm_glucose_predictions.png")
 
     plt.show()

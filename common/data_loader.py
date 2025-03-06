@@ -1,7 +1,8 @@
+import os
+import re
+
 import pandas as pd
-import numpy as np
-from datetime import timedelta
-from common.preprocessing import clean_infinite_values
+
 
 def load_and_preprocess_training_data(file_path):
     """
@@ -127,11 +128,29 @@ def load_patient_data(file_path):
     df.attrs['column_mapping'] = col_mapping
     print(f"Using '{time_col}' as time column and '{glucose_col}' as glucose column")
 
+    demographics = {}
+    filename = os.path.basename(file_path)
+
+    # Try to extract age and gender from filename
+    age_gender_match = re.match(r'(\d+)_(male|female)', filename.lower())
+    if age_gender_match:
+        age_str, gender_str = age_gender_match.groups()
+        try:
+            age = int(age_str)
+            demographics['age'] = age
+            print(f"Extracted age {age} from filename")
+        except ValueError:
+            pass
+
+        demographics['gender'] = gender_str
+        print(f"Extracted gender '{gender_str}' from filename")
+
+    df.attrs['demographics_from_filename'] = demographics
+
     datetime_formats = ['%d/%m/%Y %H:%M:%S', '%Y-%m-%d %H:%M:%S', '%m/%d/%Y %H:%M:%S']
     for dt_format in datetime_formats:
         try:
             df[time_col] = pd.to_datetime(df[time_col], format=dt_format)
-            print(f"Parsed dates using format: {dt_format}")
             break
         except:
             continue
@@ -179,8 +198,7 @@ def export_predictions(predictions_df, output_file):
     :param output_file: Path to save the predictions
     :type output_file: str
     """
-    import os
-    
+
     # Create output directory if it doesn't exist
     output_dir = os.path.dirname(output_file)
     if output_dir and not os.path.exists(output_dir):

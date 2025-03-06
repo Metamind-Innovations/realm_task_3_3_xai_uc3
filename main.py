@@ -404,7 +404,6 @@ def main():
                     except Exception as e:
                         print(f"Error plotting predictions: {str(e)}")
 
-                print("LSTM prediction complete!")
             else:
                 print("LSTM prediction failed. Please check the error messages above.")
 
