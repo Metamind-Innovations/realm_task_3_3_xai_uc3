@@ -1,7 +1,9 @@
+from datetime import datetime
+
 import matplotlib.pyplot as plt
 
 
-def plot_predictions(patient_df, predictions_df, save_png=False):
+def plot_predictions(patient_df, predictions_df, dir, save_png=False):
     """
     Visualize original glucose data alongside LSTM predictions with confidence intervals.
 
@@ -87,8 +89,9 @@ def plot_predictions(patient_df, predictions_df, save_png=False):
     plt.grid(True, alpha=0.3)
     plt.gcf().autofmt_xdate()
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if save_png:
-        plt.savefig('lstm_glucose_predictions.png', dpi=300, bbox_inches='tight')
+        plt.savefig(f'{dir}/lstm_predictions_{timestamp}.png', dpi=300, bbox_inches='tight')
         print("Plot saved as lstm_glucose_predictions.png")
 
     plt.show()

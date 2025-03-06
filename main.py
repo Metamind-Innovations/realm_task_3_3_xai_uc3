@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from common.data_loader import load_patient_data
-from lstm_utils import train_models_workflow, process_patient_data as process_lstm_patient_data, plot_lstm_predictions
+from lstm_utils import train_models_workflow, process_patient_data as process_lstm_patient_data
 from xgboost_utils import train_models as train_xgboost_models, process_patient_data as process_xgboost_patient_data, \
     plot_patient_predictions as plot_xgboost_predictions
 
@@ -399,7 +399,7 @@ def main():
 
                     try:
                         from lstm_utils.visualization import plot_predictions
-                        plot_predictions(patient_df, predictions, save_png=True)
+                        plot_predictions(patient_df, predictions, args.output_dir, save_png=True)
                         print(f"Plot saved to {plot_path}")
                     except Exception as e:
                         print(f"Error plotting predictions: {str(e)}")
