@@ -53,8 +53,13 @@ def generate_explanation_report(
 
     # Feature names
     feature_names = None
-    if features_data is not None and isinstance(features_data, pd.DataFrame):
-        feature_names = features_data.columns.tolist()
+    if features_data is not None:
+        if isinstance(features_data, pd.DataFrame):
+            feature_names = features_data.columns.tolist()
+        elif model_type.lower() == 'lstm' and hasattr(features_data, 'shape') and len(features_data.shape) == 3:
+            # For 3D LSTM data, define feature names
+            feature_names = [f"feature_{i}" for i in range(features_data.shape[2])]
+            print(f"Created feature names for LSTM model: {feature_names}")
 
     # Create appropriate explainer based on model type
     if model_type.lower() == 'xgboost':
@@ -84,14 +89,51 @@ def generate_explanation_report(
             try:
                 # Generate explanation
                 start_time = time.time()
-                X_sample = features_data
 
-                # For LSTM, need to reshape if it's a DataFrame
-                if model_type.lower() == 'lstm' and isinstance(features_data, pd.DataFrame):
-                    # This is a placeholder - actual implementation depends on data structure
-                    print("Preparing sequences for LSTM explanation...")
+                # Debug information for LSTM
+                if model_type.lower() == 'lstm':
+                    print(f"Features data type: {type(features_data)}")
+                    if hasattr(features_data, 'shape'):
+                        print(f"Features data shape: {features_data.shape}")
 
-                explanation = explainer.explain_model(X_sample, viz_dir)
+                    # For LSTM, ensure we have 3D data
+                    if isinstance(features_data, pd.DataFrame):
+                        print("WARNING: LSTM explainer requires 3D input data. Attempting to convert DataFrame.")
+                        try:
+                            # Very simplified - in a real application you'd need proper sequence creation
+                            values = features_data.values
+                            seq_len = 10  # Default sequence length
+                            n_features = values.shape[1]
+
+                            # Create simple sequences (this is just for demonstration)
+                            if len(values) >= seq_len:
+                                sequences = []
+                                for i in range(0, min(100, len(values) - seq_len + 1), seq_len):
+                                    sequences.append(values[i:i + seq_len])
+                                X_sample = np.array(sequences)
+                                print(f"Created {len(sequences)} sequences with shape {X_sample.shape}")
+                            else:
+                                # Not enough data, duplicate what we have
+                                print("Not enough data for sequences, duplicating available data")
+                                X_sample = np.array([values] * (seq_len // len(values) + 1))[:seq_len]
+                                X_sample = np.expand_dims(X_sample, axis=0)
+                                print(f"Created data with shape {X_sample.shape}")
+                        except Exception as e:
+                            print(f"Failed to convert DataFrame to sequences: {str(e)}")
+                            report['global_explanations'][f'{horizon}hr'] = {
+                                'error': f"Failed to prepare LSTM input data: {str(e)}"
+                            }
+                            continue
+                    else:
+                        X_sample = features_data
+                else:
+                    X_sample = features_data
+
+                try:
+                    explanation = explainer.explain_model(X_sample, viz_dir)
+                except Exception as e:
+                    print(f"Error in explainer.explain_model: {str(e)}")
+                    explanation = {'error': str(e)}
 
                 # Add to report
                 report['global_explanations'][f'{horizon}hr'] = explanation
@@ -108,8 +150,14 @@ def generate_explanation_report(
     if include_local_explanations and prediction_results is not None:
         print("Generating explanations for individual predictions...")
 
-        # Iterate through prediction results
-        for i, pred_row in enumerate(prediction_results.iloc):
+        # Limit the number of predictions to explain to avoid excessive computation
+        max_predictions = 3
+        sample_indices = np.linspace(0, len(prediction_results) - 1,
+                                     min(max_predictions, len(prediction_results))).astype(int)
+
+        # Iterate through selected prediction results
+        for idx in sample_indices:
+            pred_row = prediction_results.iloc[idx]
             timestamp = pred_row.get('timestamp')
 
             for horizon in [1, 2, 3]:
@@ -137,26 +185,34 @@ def generate_explanation_report(
 
                 # Get features for this prediction
                 if features_data is not None:
-                    if i < len(features_data):
-                        X = features_data.iloc[i:i + 1]
-
-                        # For LSTM, need to reshape
-                        if model_type.lower() == 'lstm':
-                            # This is a placeholder - actual implementation depends on data structure
-                            print(f"Preparing sequence for LSTM explanation of prediction {i}, {horizon}hr...")
+                    if model_type.lower() == 'lstm':
+                        if hasattr(features_data, 'shape') and len(features_data.shape) == 3 and idx < \
+                                features_data.shape[0]:
+                            # For 3D LSTM data, get appropriate sequence
+                            X = features_data[idx:idx + 1]
+                            print(f"Using LSTM sequence with shape {X.shape}")
+                        else:
+                            print(f"LSTM feature data not in expected format, skipping explanation")
+                            continue
                     else:
-                        print(f"Feature index {i} out of range, skipping explanation")
-                        continue
+                        # For DataFrame features
+                        if idx < len(features_data):
+                            X = features_data.iloc[idx:idx + 1]
+                            print(f"Using feature data with shape {X.shape if hasattr(X, 'shape') else 'unknown'}")
+                        else:
+                            print(f"Feature index {idx} out of range, skipping explanation")
+                            continue
                 else:
                     print("No feature data provided, skipping individual explanation")
                     continue
 
                 try:
                     # Generate explanation
+                    print(f"Explaining prediction {idx}, horizon {horizon}hr")
                     explanation = explainer.explain_prediction(X, horizon)
 
                     # Add metadata
-                    explanation['prediction_index'] = i
+                    explanation['prediction_index'] = int(idx)
                     explanation['timestamp'] = timestamp.isoformat() if isinstance(timestamp, datetime) else timestamp
                     explanation['prediction_time'] = pred_time.isoformat() if isinstance(pred_time,
                                                                                          datetime) else pred_time
@@ -165,9 +221,9 @@ def generate_explanation_report(
                     report['prediction_explanations'].append(explanation)
 
                 except Exception as e:
-                    print(f"Error explaining prediction {i}, {horizon}hr: {str(e)}")
+                    print(f"Error explaining prediction {idx}, {horizon}hr: {str(e)}")
                     error_explanation = {
-                        'prediction_index': i,
+                        'prediction_index': int(idx),
                         'prediction_horizon': horizon,
                         'timestamp': timestamp.isoformat() if isinstance(timestamp, datetime) else timestamp,
                         'error': str(e)
