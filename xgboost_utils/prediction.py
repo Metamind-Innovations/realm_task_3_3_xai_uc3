@@ -1,10 +1,10 @@
-import pandas as pd
-import numpy as np
 from datetime import timedelta
+
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 from common.data_loader import load_patient_data, export_predictions
-from common.preprocessing import clean_infinite_values
 from xgboost_utils.feature_engineering import create_prediction_features
 from xgboost_utils.model import load_models
 from xgboost_utils.visualization import plot_patient_predictions
@@ -196,7 +196,7 @@ def evaluate_predictions(predictions_df, actual_df):
     return evaluation_results
 
 
-def process_patient_data(patient_file, model_dir='models', output_file='glucose_predictions.csv'):
+def process_patient_data(patient_file, model_dir='models', output_file='glucose_predictions.csv', skip_plotting=False):
     """
     Process patient data to generate predictions with XGBoost models.
 
@@ -206,6 +206,8 @@ def process_patient_data(patient_file, model_dir='models', output_file='glucose_
     :type model_dir: str
     :param output_file: Path to save predictions
     :type output_file: str
+    :param skip_plotting: If True, skip the visualization step
+    :type skip_plotting: bool
     :returns: DataFrame with predictions
     :rtype: pandas.DataFrame
     """
@@ -231,13 +233,6 @@ def process_patient_data(patient_file, model_dir='models', output_file='glucose_
         return None
 
     export_predictions(predictions_df, output_file)
-
-    print("Plotting results...")
-    try:
-        plot_patient_predictions(patient_df, predictions_df)
-    except Exception as e:
-        print(f"Error plotting predictions: {str(e)}")
-        print("Continuing without visualization...")
 
     try:
         future_end_time = None
@@ -275,5 +270,14 @@ def process_patient_data(patient_file, model_dir='models', output_file='glucose_
     except Exception as e:
         print(f"Error during evaluation: {str(e)}")
         print("Continuing without evaluation...")
+
+    # Only plot if not skipped
+    if not skip_plotting:
+        print("Plotting results...")
+        try:
+            plot_patient_predictions(patient_df, predictions_df)
+        except Exception as e:
+            print(f"Error plotting predictions: {str(e)}")
+            print("Continuing without visualization...")
 
     return predictions_df

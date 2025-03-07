@@ -1,9 +1,10 @@
+from datetime import datetime
+
 import matplotlib.pyplot as plt
 import pandas as pd
-from common.data_loader import get_column_name
 
 
-def plot_patient_predictions(patient_df, predictions_df, save_png=False):
+def plot_patient_predictions(patient_df, predictions_df, dir, save_png=False):
     """
     Plot patient glucose data with predictions and confidence intervals.
 
@@ -86,9 +87,9 @@ def plot_patient_predictions(patient_df, predictions_df, save_png=False):
     plt.grid(True, alpha=0.3)
     plt.gcf().autofmt_xdate()
 
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if save_png:
-        plt.savefig('xgboost_glucose_predictions.png', dpi=300, bbox_inches='tight')
-        print("Plot saved as xgboost_glucose_predictions.png")
+        plt.savefig(f'{dir}/xgboost_predictions_{timestamp}.png', dpi=300, bbox_inches='tight')
 
     plt.show()
 

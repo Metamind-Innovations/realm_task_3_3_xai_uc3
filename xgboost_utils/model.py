@@ -103,11 +103,11 @@ def load_models(model_dir='models'):
     return models, quantile_models
 
 
-def train_test_evaluate_model(X, y, model, model_name="Model"):
+def train_test_evaluate_model(X, y, model, model_name="Model", X_for_training=None):
     """
     Train, test and evaluate a model.
 
-    :param X: Features dataframe
+    :param X: Features dataframe (including stratification columns)
     :type X: pandas.DataFrame
     :param y: Target values
     :type y: pandas.Series
@@ -115,24 +115,50 @@ def train_test_evaluate_model(X, y, model, model_name="Model"):
     :type model: xgboost.XGBRegressor
     :param model_name: Name for reporting
     :type model_name: str
+    :param X_for_training: Features to actually use for training (if None, uses X)
+    :type X_for_training: pandas.DataFrame or None
     :returns: Trained model and evaluation metrics
     :rtype: tuple(xgboost.XGBRegressor, dict)
     """
     from sklearn.model_selection import train_test_split
 
+    # Use X_for_training if provided, otherwise use X
+    if X_for_training is None:
+        X_for_training = X
+
     # Clean data
-    X = clean_infinite_values(X)
-    X = X.fillna(method='ffill').fillna(0)
+    X_for_training = clean_infinite_values(X_for_training)
+    X_for_training = X_for_training.fillna(method='ffill').fillna(0)
 
     try:
-        # Split data with stratification if possible
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=0.2, random_state=42,
-            stratify=X['SUBJECT_ID'] if len(X['SUBJECT_ID'].unique()) > 1 else None
-        )
-    except ValueError:
+        # Check for subject_id in either uppercase or lowercase format
+        subject_id_col = None
+        if 'SUBJECT_ID' in X.columns:
+            subject_id_col = 'SUBJECT_ID'
+        elif 'subject_id' in X.columns:
+            subject_id_col = 'subject_id'
+
+        if subject_id_col and len(X[subject_id_col].unique()) > 1:
+            # Get train/test indices with stratification
+            train_indices, test_indices = train_test_split(
+                range(len(X)), test_size=0.2, random_state=42,
+                stratify=X[subject_id_col]
+            )
+
+            # Apply indices to both X and X_for_training
+            X_train = X_for_training.iloc[train_indices]
+            X_test = X_for_training.iloc[test_indices]
+            y_train = y.iloc[train_indices]
+            y_test = y.iloc[test_indices]
+        else:
+            # Simple split without stratification
+            X_train, X_test, y_train, y_test = train_test_split(
+                X_for_training, y, test_size=0.2, random_state=42
+            )
+    except ValueError as e:
+        print(f"Stratification error: {e}")
         # Fall back to simple split if stratification fails
-        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X_for_training, y, test_size=0.2, random_state=42)
 
     print(f"Training data size: {X_train.shape[0]} samples")
     print(f"Test data size: {X_test.shape[0]} samples")
@@ -140,8 +166,8 @@ def train_test_evaluate_model(X, y, model, model_name="Model"):
     # Final check for infinities and NaNs
     if np.isinf(X_train.values).any() or np.isnan(X_train.values).any():
         print("Warning: Infinities or NaNs found in training data after preparation!")
-        X_train = pd.DataFrame(X_train, columns=X.columns).fillna(0)
-        X_test = pd.DataFrame(X_test, columns=X.columns).fillna(0)
+        X_train = pd.DataFrame(X_train, columns=X_for_training.columns).fillna(0)
+        X_test = pd.DataFrame(X_test, columns=X_for_training.columns).fillna(0)
 
         X_train = X_train.replace([np.inf, -np.inf], [1e10, -1e10])
         X_test = X_test.replace([np.inf, -np.inf], [1e10, -1e10])

@@ -7,9 +7,9 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from common.data_loader import load_patient_data
+from config import MAX_SEQUENCE_LENGTH
 from lstm_utils import train_models_workflow, process_patient_data as process_lstm_patient_data
-from xgboost_utils import train_models as train_xgboost_models, process_patient_data as process_xgboost_patient_data, \
-    plot_patient_predictions as plot_xgboost_predictions
+from xgboost_utils import train_models as train_xgboost_models, process_patient_data as process_xgboost_patient_data
 
 
 def setup_arg_parser():
@@ -43,7 +43,8 @@ def setup_arg_parser():
     parser.add_argument('--save-plots', action='store_true', help='Save prediction plots to files')
 
     # Advanced options
-    parser.add_argument('--sequence-length', type=int, help='Sequence length for LSTM (default: adaptive)')
+    parser.add_argument('--sequence-length', type=int, help='Sequence length for LSTM (default: adaptive)',
+                        default=MAX_SEQUENCE_LENGTH)
     parser.add_argument('--compare-models', action='store_true', help='Compare predictions from multiple models')
 
     # XAI options
@@ -363,7 +364,8 @@ def main():
             predictions = process_xgboost_patient_data(
                 args.patient_file,
                 args.xgboost_dir,
-                output_file
+                output_file,
+                skip_plotting=True
             )
 
             if predictions is not None:
@@ -372,9 +374,13 @@ def main():
                 if args.save_plots:
                     patient_df = load_patient_data(args.patient_file)
                     plot_path = output_file.replace('.csv', '.png')
-                    plt.figure(figsize=(12, 8))
-                    plot_xgboost_predictions(patient_df, predictions, save_png=True)
-                    print(f"Plot saved to {plot_path}")
+
+                    try:
+                        from xgboost_utils.visualization import plot_patient_predictions as plot_xgboost_predictions
+                        plot_xgboost_predictions(patient_df, predictions, args.output_dir, save_png=True)
+                        print(f"Plot saved to {plot_path}")
+                    except Exception as e:
+                        print(f"Error plotting predictions: {str(e)}")
 
                 print("XGBoost prediction complete!")
             else:
@@ -461,8 +467,6 @@ def main():
 
                 elif args.model_type == 'lstm':
                     print("Generating LSTM model explanations...")
-
-                    # Load data and models
                     patient_df = load_patient_data(args.patient_file)
 
                     from lstm_utils.model import load_lstm_models

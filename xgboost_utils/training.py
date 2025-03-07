@@ -1,7 +1,8 @@
 import os
-import pandas as pd
-import numpy as np
+
 import joblib
+import numpy as np
+import pandas as pd
 from tqdm import tqdm
 
 from common.data_loader import load_and_preprocess_training_data
@@ -9,6 +10,7 @@ from common.preprocessing import clean_infinite_values
 from common.visualization import plot_model_evaluation
 from xgboost_utils.feature_engineering import prepare_dataset
 from xgboost_utils.model import create_xgboost_model, create_quantile_model, train_test_evaluate_model
+
 
 def train_enhanced_glucose_models(features_df, save_dir='models'):
     """
@@ -26,12 +28,15 @@ def train_enhanced_glucose_models(features_df, save_dir='models'):
     models = {}
     quantile_models = {}
 
+    # Filter feature columns, but keep subject_id for stratification
     all_feature_cols = [col for col in features_df.columns
-                        if not col.lower().startswith('future_')
-                        and col.upper() != 'SUBJECT_ID'
-                        and col.lower() != 'subject_id']
+                        if not col.lower().startswith('future_')]
 
-    print(f"Training with {len(all_feature_cols)} features")
+    # Remove subject_id from features only for training purposes
+    feature_cols_for_training = [col for col in all_feature_cols
+                                 if col.lower() != 'subject_id' and col.upper() != 'SUBJECT_ID']
+
+    print(f"Training with {len(feature_cols_for_training)} features")
     all_metrics = {}
 
     if not os.path.exists(save_dir):
@@ -48,30 +53,35 @@ def train_enhanced_glucose_models(features_df, save_dir='models'):
         print(f"\nTraining Enhanced {hours}-hour Prediction Model")
         print("*" * 30)
 
+        # Include subject_id for stratification, but don't use it as a feature
         X = features_df[all_feature_cols]
+        X_for_training = features_df[feature_cols_for_training]
         y = features_df[target_col]
 
         # Create and train main model
         model = create_xgboost_model()
-        model, metrics = train_test_evaluate_model(X, y, model, f"Enhanced {hours}-hour Prediction Model")
+        # Pass X with subject_id for stratification, but only use appropriate features for training
+        model, metrics = train_test_evaluate_model(X, y, model, f"Enhanced {hours}-hour Prediction Model",
+                                                   X_for_training)
         all_metrics[hours] = metrics
 
         # Create and train lower bound model (5th percentile)
         lower_model = create_quantile_model(quantile_alpha=0.05)
         print(f"Training lower bound {hours}-hour prediction model...")
-        lower_model.fit(X, y, verbose=False)
+        lower_model.fit(X_for_training, y, verbose=False)
 
         # Create and train upper bound model (95th percentile)
         upper_model = create_quantile_model(quantile_alpha=0.95)
         print(f"Training upper bound {hours}-hour prediction model...")
-        upper_model.fit(X, y, verbose=False)
+        upper_model.fit(X_for_training, y, verbose=False)
 
         # Make predictions and plot evaluation
-        y_pred = model.predict(X)
+        y_pred = model.predict(X_for_training)
         plot_model_evaluation(y, y_pred, title=f"Enhanced {hours}-hour Prediction", save_png=False)
 
         # Evaluate confidence interval coverage
-        X_sample = X.sample(min(1000, len(X)))
+        # IMPORTANT: Use X_for_training for predictions, NOT X
+        X_sample = X_for_training.sample(min(1000, len(X_for_training)))
         y_sample = y.loc[X_sample.index]
         lower_bound = lower_model.predict(X_sample)
         upper_bound = upper_model.predict(X_sample)
@@ -82,13 +92,13 @@ def train_enhanced_glucose_models(features_df, save_dir='models'):
         metrics_df = pd.DataFrame({
             'Metric': ['RMSE', 'MAE', 'R²', 'MAPE', 'Mean Error', 'Std Error', 'CI Coverage'],
             'Value': [metrics['rmse'], metrics['mae'], metrics['r2'],
-                     metrics['mape'], metrics['mean_error'], metrics['std_error'], within_ci]
+                      metrics['mape'], metrics['mean_error'], metrics['std_error'], within_ci]
         })
         metrics_df.to_csv(os.path.join(metrics_dir, f'metrics_{hours}hr.csv'), index=False)
 
         # Save feature importance
         if hasattr(model, 'feature_importances_'):
-            importance = dict(zip(all_feature_cols, model.feature_importances_))
+            importance = dict(zip(feature_cols_for_training, model.feature_importances_))
             sorted_importance = sorted(importance.items(), key=lambda x: x[1], reverse=True)
 
             print("\nTop 10 Feature Importance:")
@@ -96,7 +106,7 @@ def train_enhanced_glucose_models(features_df, save_dir='models'):
                 print(f"{feature}: {imp:.4f}")
 
             importance_df = pd.DataFrame({
-                'Feature': all_feature_cols,
+                'Feature': feature_cols_for_training,
                 'Importance': model.feature_importances_
             })
             importance_df = importance_df.sort_values('Importance', ascending=False)
