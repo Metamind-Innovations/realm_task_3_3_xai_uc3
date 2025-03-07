@@ -168,28 +168,3 @@ class XGBoostExplainer(BaseExplainer):
         }
 
         return explanation
-
-    def plot_feature_importance(self, output_path=None):
-        """
-        Plot feature importance from the model.
-
-        :param output_path: Path to save the plot, if None just shows the plot
-        """
-        if not hasattr(self.model, 'feature_importances_'):
-            print("Model does not have feature importances")
-            return
-
-        importances = self.model.feature_importances_
-        indices = np.argsort(importances)[::-1]
-
-        plt.figure(figsize=(12, 8))
-        plt.title('Feature Importance')
-        plt.bar(range(len(importances)), importances[indices], align='center')
-        plt.xticks(range(len(importances)), [self.feature_names[i] for i in indices], rotation=90)
-        plt.tight_layout()
-
-        if output_path:
-            plt.savefig(output_path, dpi=300, bbox_inches='tight')
-            print(f"Feature importance plot saved to {output_path}")
-        else:
-            plt.show()

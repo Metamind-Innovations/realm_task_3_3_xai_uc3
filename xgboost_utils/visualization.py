@@ -94,50 +94,6 @@ def plot_patient_predictions(patient_df, predictions_df, dir, save_png=False):
     plt.show()
 
 
-def plot_feature_importance(model, feature_names, top_n=20, save_path=None):
-    """
-    Plot feature importance from a trained XGBoost model.
-
-    :param model: Trained XGBoost model
-    :type model: xgboost.XGBRegressor
-    :param feature_names: List of feature names
-    :type feature_names: list
-    :param top_n: Number of top features to display
-    :type top_n: int
-    :param save_path: Path to save the plot
-    :type save_path: str
-    """
-    if not hasattr(model, 'feature_importances_'):
-        print("Model does not have feature importances")
-        return
-
-    # Get feature importance
-    importance = model.feature_importances_
-
-    # Create dataframe for easier sorting
-    feature_imp_df = pd.DataFrame({
-        'Feature': feature_names,
-        'Importance': importance
-    }).sort_values('Importance', ascending=False)
-
-    # Get top N features
-    top_features = feature_imp_df.head(top_n)
-
-    # Create plot
-    plt.figure(figsize=(10, 8))
-    plt.barh(range(len(top_features)), top_features['Importance'], align='center')
-    plt.yticks(range(len(top_features)), top_features['Feature'])
-    plt.title('Feature Importance')
-    plt.xlabel('Importance')
-    plt.tight_layout()
-
-    if save_path:
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
-        print(f"Feature importance plot saved to {save_path}")
-
-    plt.show()
-
-
 def plot_prediction_comparison(actual_values, predictions, title="Prediction Comparison", save_path=None):
     """
     Plot comparison between actual and predicted values.

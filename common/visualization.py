@@ -1,5 +1,5 @@
 import matplotlib.pyplot as plt
-import numpy as np
+
 
 def plot_model_evaluation(y_test, y_pred, title="Model Evaluation", save_png=False):
     """

@@ -68,35 +68,3 @@ def encode_icd9_code(code):
         subcategory = 0.0
 
     return category, subcategory
-
-
-def create_output_dir(directory):
-    """
-    Create directory if it doesn't exist
-
-    :param directory: Directory path to create
-    :type directory: str
-    """
-    import os
-    
-    if directory and not os.path.exists(directory):
-        os.makedirs(directory)
-        print(f"Created directory: {directory}")
-
-
-def format_time_difference(td):
-    """
-    Format timedelta to a human-readable string
-
-    :param td: Time difference
-    :type td: datetime.timedelta
-    :returns: Formatted time string
-    :rtype: str
-    """
-    seconds = td.total_seconds()
-    if seconds < 60:
-        return f"{seconds:.1f} seconds"
-    elif seconds < 3600:
-        return f"{seconds / 60:.1f} minutes"
-    else:
-        return f"{seconds / 3600:.2f} hours"
