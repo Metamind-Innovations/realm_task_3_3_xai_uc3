@@ -45,7 +45,8 @@ def generate_explanation_report(
         'metadata': {
             'model_type': model_type,
             'timestamp': datetime.now().isoformat(),
-            'horizons': list(models.keys()) if isinstance(models, dict) else [1, 2, 3]
+            'horizons': list(models.keys()) if isinstance(models, dict) else [1, 2, 3],
+            'features_used': None  # Will be populated below
         },
         'global_explanations': {},
         'prediction_explanations': []
@@ -53,13 +54,29 @@ def generate_explanation_report(
 
     # Feature names
     feature_names = None
-    if features_data is not None:
-        if isinstance(features_data, pd.DataFrame):
+    try:
+        # For LSTM, try to get feature names from config
+        if model_type.lower() == 'lstm':
+            from config import FEATURES_TO_INCLUDE
+            feature_names = FEATURES_TO_INCLUDE
+            print(f"Using feature names from config: {feature_names}")
+            report['metadata']['features_used'] = feature_names
+        elif isinstance(features_data, pd.DataFrame):
             feature_names = features_data.columns.tolist()
+            report['metadata']['features_used'] = feature_names
         elif model_type.lower() == 'lstm' and hasattr(features_data, 'shape') and len(features_data.shape) == 3:
             # For 3D LSTM data, define feature names
-            feature_names = [f"feature_{i}" for i in range(features_data.shape[2])]
-            print(f"Created feature names for LSTM model: {feature_names}")
+            try:
+                from config import FEATURES_TO_INCLUDE
+                feature_names = FEATURES_TO_INCLUDE
+                print(f"Using feature names from config: {feature_names}")
+                report['metadata']['features_used'] = feature_names
+            except ImportError:
+                feature_names = [f"feature_{i}" for i in range(features_data.shape[2])]
+                print(f"Created generic feature names for LSTM model: {feature_names}")
+                report['metadata']['features_used'] = feature_names
+    except Exception as e:
+        print(f"Error getting feature names: {str(e)}")
 
     # Create appropriate explainer based on model type
     if model_type.lower() == 'xgboost':
