@@ -9,7 +9,6 @@ from utils.generic_utils import load_json_file, get_json_files, save_json
 from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
 from STAR_model import STARWrapper
 
-
 DEMOGRAPHICS_COLUMNS = {"age": "age", "gender": "gender"}
 
 
