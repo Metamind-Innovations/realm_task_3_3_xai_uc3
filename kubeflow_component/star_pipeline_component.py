@@ -218,7 +218,7 @@ def fairness_visualization(
 # Step 4: Explainer Analysis
 # -----------------------
 @dsl.component(
-    base_image="python:3.13-slim",
+    base_image="python:3.14-slim",
     packages_to_install=[
         "requests==2.32.5",
         "tqdm==4.67.1",
@@ -277,7 +277,7 @@ def explainer_analysis(
 # Step 5: Explainer Visualization
 # -----------------------
 @dsl.component(
-    base_image="python:3.13-slim",
+    base_image="python:3.14-slim",
     packages_to_install=["tqdm==4.67.1", "pandas==2.3.3", "matplotlib==3.10.7"],
 )
 def explainer_visualization(
