@@ -21,7 +21,7 @@ class STARWrapper:
 
         Args:
             url (str): API endpoint URL. Default is the public STAR validation endpoint.
-            timeout (int): Request timeout in seconds (default: 60).
+            timeout (int): Request timeout in seconds (default: 5).
         """
         self.url = url
         self.timeout = timeout
