@@ -161,7 +161,7 @@ def fairness_analysis(
 # -----------------------
 @dsl.component(
     base_image="python:3.14-slim",
-    packages_to_install=["matplotlib==3.10.7", "", ""],
+    packages_to_install=["matplotlib==3.10.7"],
 )
 def fairness_visualization(
     project_files: Input[Model],

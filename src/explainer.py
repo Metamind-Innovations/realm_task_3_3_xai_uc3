@@ -256,7 +256,6 @@ def process_single_patient(
         return ae
 
     except Exception as e:
-        print("Process single patient failed", e)
         return None
 
 
@@ -335,7 +334,6 @@ def analyze_feature_importance(
 
     # Test each attribute
     for attr_name in tqdm(ATTRIBUTES, desc="Testing attributes"):
-        print(f"Testing {attr_name}")
         if analysis_type == "feature_ablation":
             current_attr_fn = transform_functions[attr_name]
 
@@ -445,7 +443,7 @@ def main() -> None:
     """CLI entry point for feature importance analysis."""
 
     parser = argparse.ArgumentParser(
-        description="Analyze feature importance in STAR blood glucose predictions using coverage metric",
+        description="Analyze feature importance in STAR blood glucose predictions using mae metric",
     )
     parser.add_argument(
         "--data_path",
