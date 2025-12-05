@@ -34,19 +34,24 @@ def plot_importances(
 
     plt.figure(figsize=figsize)
 
-    bars = plt.barh(features, importances, color="steelblue")
+    colors = [
+        "steelblue" if v > 0 else "indianred" if v < 0 else "gray" for v in importances
+    ]
+    bars = plt.barh(features, importances, color=colors)
+
     plt.gca().invert_yaxis()
 
     plt.title(title, fontsize=12, fontweight="bold")
     plt.xlabel(xlabel, fontsize=10)
     plt.ylabel(ylabel, fontsize=10)
     plt.tick_params(axis="both", which="major", labelsize=7)
+    plt.axvline(0, color="black", linewidth=0.2, linestyle="--")
 
     xmin = min(importances)
     xmax = max(importances)
     x_range = xmax - xmin if xmax != xmin else 1
 
-    xlim_min = 0
+    xlim_min = xmin - (x_range * 0.12)
     xlim_max = xmax + (x_range * 0.12)
 
     plt.xlim(xlim_min, xlim_max)
@@ -129,14 +134,16 @@ def visualize_feature_importance(
     if method == "feature_ablation":
         explanation_text = (
             "Feature Ablation: Shows impact when features are removed. "
-            "Higher values indicate features that are more important for accurate predictions. "
-            "Values range between [0, 1]."
+            "Higher positive values indicate features that are more important for accurate predictions. "
+            "Lower negative values indicate features that are not important for model predictions. "
+            "Values range between [-1, 1]."
         )
     if method == "feature_perturbation":
         explanation_text = (
             "Feature Perturbation: Shows impact when features are modified. "
-            "Higher values indicate features where changes significantly affect predictions. "
-            "Values range between [0, 1]."
+            "Higher positive values indicate features that are more important for accurate predictions. "
+            "Lower negative values indicate features that are not important for model predictions. "
+            "Values range between [-1, 1]."
         )
 
     # Create title

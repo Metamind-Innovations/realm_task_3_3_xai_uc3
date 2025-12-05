@@ -369,20 +369,28 @@ def analyze_feature_importance(
         # Compute MAE after transformation
         transformed_mae = compute_mae(patients_data=transformed_data, star_api=star_api)
 
-        # Feature importance = INCREASE in MAE (higher MAE = worse predictions)
-        mae_increase = max(0, transformed_mae - baseline_mae)
-        feature_importance[attr_name] = mae_increase
+        # Feature importance
+        # Positive = INCREASE in MAE (higher MAE = worse predictions, feature is good for the model)
+        # Negative = DECREASE in MAE (lower MAE = better predictions, feature is not good for the model)
+        mae_diff = transformed_mae - baseline_mae
+        feature_importance[attr_name] = mae_diff
 
     # Sort by importance
     feature_importance = dict(
         sorted(feature_importance.items(), key=lambda x: x[1], reverse=True)
     )
 
-    # Nornalize values to 0-1
-    total_importance = sum(feature_importance.values())
-    feature_importance = {
-        key: (value / total_importance) for key, value in feature_importance.items()
-    }
+    # Normalize by sum of absolute values
+    total_abs_importance = sum(abs(value) for value in feature_importance.values())
+
+    if total_abs_importance > 0:
+        feature_importance = {
+            key: (value / total_abs_importance)
+            for key, value in feature_importance.items()
+        }
+    else:
+        # All differences are zero
+        feature_importance = {key: 0.0 for key in feature_importance.keys()}
 
     return feature_importance
 

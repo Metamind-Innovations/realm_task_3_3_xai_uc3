@@ -401,14 +401,15 @@ The fairness analysis produces:
 ### Explainability Analysis Output
 For Feature Ablation (sensitivity < 0.5):
 - Shows the impact when features are removed from the model input.
-- Higher importance scores indicate features that are more critical for accurate predictions.
-- Values are normalized to range [0, 1].
+- Higher positive importance scores indicate features that are more critical for accurate predictions.
+- Negative importance scores indicate features that are harmful for the model predictions.
 - Features with 0.0 importance had no measurable impact when removed.
 
 For Feature Perturbation (sensitivity ≥ 0.5):
 - Shows the impact when feature values are modified.
-- Higher importance scores indicate features where changes significantly affect predictions.
-- Values are normalized to range [0, 1].
+- Higher positive importance scores indicate features where changes significantly affect predictions. These features are more critical for accurate predictions.
+- Negative importance scores indicate features that are harmful for the model predictions.
+- Values are normalized to range [-1, 1].
 - The horizontal bar plot ranks features by their sensitivity to perturbation.
 
 **Key Features Analyzed:**
