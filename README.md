@@ -37,7 +37,7 @@ Key Components:
 ## Getting Started
 
 ### Prerequisites
-- Python 3.14 or higher
+- Python 3.14
 - Required Python packages (installed via `pip install -r requirements.txt`, can be found in [requirements.txt](./requirements.txt))
 
 ### Data Structure
