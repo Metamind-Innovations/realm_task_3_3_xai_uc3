@@ -14,22 +14,20 @@ from utils.explainer_helpers import (
     ATTRIBUTES,
     MAX_WORKERS,
 )
-from STAR_model import STARWrapper
+from STAR_model import STARDockerWrapper
 
 
 # ============================================================================
 # ABLATION FUNCTIONS
 # ============================================================================
 def ablate_field(data: Dict[str, Any], category: str, field: str) -> Dict[str, Any]:
-    """Remove a field from all entries in a category.
+    """
+    Remove a field from all entries in a category.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        category (str): Category name (e.g., 'insulinInfusion').
-        field (str): Field name to remove.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with field removed.
+    :param data: Patient data dictionary.
+    :param category: Category name (e.g., 'insulinInfusion').
+    :param field: Field name to remove.
+    :return: Modified patient data with field removed.
     """
 
     p = copy.deepcopy(data)
@@ -40,13 +38,11 @@ def ablate_field(data: Dict[str, Any], category: str, field: str) -> Dict[str, A
 
 
 def ablate_diabetic_status(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Remove diabetic status field.
+    """
+    Remove diabetic status field.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-
-    Returns:
-        Dict[str, Any]: Modified patient data without diabetic status.
+    :param data: Patient data dictionary.
+    :return: Modified patient data without diabetic status.
     """
 
     p = copy.deepcopy(data)
@@ -56,13 +52,11 @@ def ablate_diabetic_status(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def ablate_blood_glucose(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep only 2 BG measurements before prediction time (minimum required).
+    """
+    Keep only 2 BG measurements before prediction time (minimum required).
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with reduced blood glucose measurements.
+    :param data: Patient data dictionary.
+    :return: Modified patient data with reduced blood glucose measurements.
     """
 
     p = copy.deepcopy(data)
@@ -75,11 +69,10 @@ def ablate_blood_glucose(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_ablation_registry() -> Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]]:
-    """Build registry of ablation functions for each attribute.
+    """
+    Build registry of ablation functions for each attribute.
 
-    Returns:
-        Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]]: Dictionary mapping
-            attribute names to ablation functions.
+    :return: Dictionary mapping attribute names to ablation functions.
     """
     registry = {}
 
@@ -101,11 +94,10 @@ def build_ablation_registry() -> Dict[str, Callable[[Dict[str, Any]], Dict[str, 
 # PERTURBATION FUNCTIONS
 # ============================================================================
 def build_perturbation_registry() -> Dict[str, Tuple[str, Any]]:
-    """Build registry of perturbation strategies (type, magnitude).
+    """
+    Build registry of perturbation strategies (type, magnitude).
 
-    Returns:
-        Dict[str, Tuple[str, Any]]: Dictionary mapping attribute names to
-            (perturbation_type, parameter) tuples.
+    :return: Dictionary mapping attribute names to (perturbation_type, parameter) tuples.
     """
     return {
         "diabeticStatus": ("categorical", [0, 1, 2]),
@@ -131,17 +123,15 @@ def build_perturbation_registry() -> Dict[str, Tuple[str, Any]]:
 
 
 def perturb_continuous(
-    data: Dict[str, Any], attr: str, magnitude: float
+        data: Dict[str, Any], attr: str, magnitude: float
 ) -> Dict[str, Any]:
-    """Perturb continuous attribute by percentage with bounds checking.
+    """
+    Perturb continuous attribute by percentage with bounds checking.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        attr (str): Attribute name (e.g., 'bloodGlucose.value').
-        magnitude (float): Perturbation magnitude as decimal (e.g., 0.25 for 25%).
-
-    Returns:
-        Dict[str, Any]: Modified patient data with perturbed values.
+    :param data: Patient data dictionary.
+    :param attr: Attribute name (e.g., 'bloodGlucose.value').
+    :param magnitude: Perturbation magnitude as decimal (e.g., 0.25 for 25%).
+    :return: Modified patient data with perturbed values.
     """
     p = copy.deepcopy(data)
     parts = attr.split(".")
@@ -166,14 +156,12 @@ def perturb_continuous(
 
 
 def perturb_binary(data: Dict[str, Any], attr: str) -> Dict[str, Any]:
-    """Flip binary attribute.
+    """
+    Flip binary attribute.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        attr (str): Attribute name.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with flipped binary value.
+    :param data: Patient data dictionary.
+    :param attr: Attribute name.
+    :return: Modified patient data with flipped binary value.
     """
     p = copy.deepcopy(data)
     parts = attr.split(".")
@@ -193,17 +181,15 @@ def perturb_binary(data: Dict[str, Any], attr: str) -> Dict[str, Any]:
 
 
 def perturb_categorical(
-    data: Dict[str, Any], attr: str, values: List[int]
+        data: Dict[str, Any], attr: str, values: List[int]
 ) -> Dict[str, Any]:
-    """Change categorical attribute to different value.
+    """
+    Change categorical attribute to different value.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        attr (str): Attribute name.
-        values (List[int]): List of possible categorical values.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with changed categorical value.
+    :param data: Patient data dictionary.
+    :param attr: Attribute name.
+    :param values: List of possible categorical values.
+    :return: Modified patient data with changed categorical value.
     """
     p = copy.deepcopy(data)
 
@@ -230,18 +216,15 @@ def perturb_categorical(
 # MAE COMPUTATION
 # ============================================================================
 def process_single_patient(
-    data: Dict[str, Any],
-    star_api: STARWrapper,
+        data: Dict[str, Any],
+        star_api: STARDockerWrapper,
 ) -> Optional[float]:
-    """Process single patient and compute absolute error.
+    """
+    Process single patient and compute absolute error.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        star_api (STARWrapper): STAR API wrapper instance.
-
-    Returns:
-        Optional[float]: Absolute error between actual and predicted values,
-            or None if failed.
+    :param data: Patient data dictionary.
+    :param star_api: STAR Docker wrapper instance.
+    :return: Absolute error between actual and predicted values, or None if failed.
     """
     try:
         pred_time, actual_value = extract_prediction_info(data)
@@ -260,17 +243,15 @@ def process_single_patient(
 
 
 def compute_mae(
-    patients_data: List[Dict[str, Any]],
-    star_api: STARWrapper,
+        patients_data: List[Dict[str, Any]],
+        star_api: STARDockerWrapper,
 ) -> float:
-    """Compute Mean Absolute Error across all patients.
+    """
+    Compute Mean Absolute Error across all patients.
 
-    Args:
-        patients_data (List[Dict[str, Any]]): List of patient data dictionaries.
-        star_api (STARWrapper): STAR API wrapper instance.
-
-    Returns:
-        float: Mean absolute error across all successfully processed patients.
+    :param patients_data: List of patient data dictionaries.
+    :param star_api: STAR Docker wrapper instance.
+    :return: Mean absolute error across all successfully processed patients.
     """
 
     aes = []
@@ -282,10 +263,10 @@ def compute_mae(
         ]
 
         for future in tqdm(
-            as_completed(futures),
-            total=len(patients_data),
-            desc="Computing MAE",
-            leave=False,
+                as_completed(futures),
+                total=len(patients_data),
+                desc="Computing MAE",
+                leave=False,
         ):
             ae = future.result()
 
@@ -304,21 +285,17 @@ def compute_mae(
 # FEATURE ABLATION - FEATURE PERTURBATION ANALYSIS
 # ============================================================================
 def analyze_feature_importance(
-    patients_data: List[Dict[str, Any]],
-    star_api: STARWrapper,
-    analysis_type: Literal["feature_ablation", "feature_perturbation"],
+        patients_data: List[Dict[str, Any]],
+        star_api: STARDockerWrapper,
+        analysis_type: Literal["feature_ablation", "feature_perturbation"],
 ) -> Dict[str, float]:
-    """Analyze feature importance using ablation or perturbation.
+    """
+    Analyze feature importance using ablation or perturbation.
 
-    Args:
-        patients_data (List[Dict[str, Any]]): List of patient data dictionaries.
-        star_api (STARWrapper): STAR API wrapper instance.
-        analysis_type (Literal["feature_ablation", "feature_perturbation"]):
-            Type of analysis.
-
-    Returns:
-        Dict[str, float]: Dictionary mapping attribute names to normalized
-            importance scores (0-1).
+    :param patients_data: List of patient data dictionaries.
+    :param star_api: STAR Docker wrapper instance.
+    :param analysis_type: Type of analysis.
+    :return: Dictionary mapping attribute names to normalized importance scores (0-1).
     """
 
     # Compute baseline MAE
@@ -396,19 +373,21 @@ def analyze_feature_importance(
 
 
 def feature_importance_analysis(
-    data_path: str,
-    output_path: str,
-    sensitivity: float,
+        data_path: str,
+        output_path: str,
+        sensitivity: float,
+        docker_image: str = "glucomeo",
+        in_docker_run: bool = False,
 ) -> None:
-    """Run feature importance analysis on patient data.
+    """
+    Run feature importance analysis on patient data.
 
-    Args:
-        data_path (str): Path to directory containing patient JSON files.
-        output_path (str): Output directory path for results.
-        sensitivity (float): Sensitivity level [0, 1]. <0.5: ablation, >=0.5: perturbation.
-
-    Raises:
-        ValueError: If sensitivity not in [0, 1] or no files found.
+    :param data_path: Path to directory containing patient JSON files.
+    :param output_path: Output directory path for results.
+    :param sensitivity: Sensitivity level [0, 1]. <0.5: ablation, >=0.5: perturbation.
+    :param docker_image: Docker image name for STAR model.
+    :param in_docker_run: Whether running inside Docker container.
+    :raises ValueError: If sensitivity not in [0, 1] or no files found.
     """
 
     # Validate sensitivity
@@ -430,8 +409,7 @@ def feature_importance_analysis(
     if not patients_data:
         raise ValueError("No patients successfully loaded")
 
-    # Initialize model
-    star_api = STARWrapper()
+    star_api = STARDockerWrapper(docker_image=docker_image, in_docker_run=in_docker_run)
 
     # Run analysis
     results = analyze_feature_importance(
@@ -448,8 +426,9 @@ def feature_importance_analysis(
 
 
 def main() -> None:
-    """CLI entry point for feature importance analysis."""
-
+    """
+    CLI entry point for feature importance analysis.
+    """
     parser = argparse.ArgumentParser(
         description="Analyze feature importance in STAR blood glucose predictions using mae metric",
     )
@@ -469,6 +448,17 @@ def main() -> None:
         default=0.3,
         help="Sensitivity level [0, 1]. <0.5: feature ablation, >=0.5: feature perturbation. Default: 0.3",
     )
+    parser.add_argument(
+        "--docker_image",
+        default="glucomeo",
+        help="Docker image name for STAR model (default: glucomeo)",
+    )
+    parser.add_argument(
+        "--in_docker_run",
+        action="store_true",
+        default=False,
+        help="Whether running inside Docker container (default: False)",
+    )
 
     args = parser.parse_args()
 
@@ -476,6 +466,8 @@ def main() -> None:
         data_path=args.data_path,
         output_path=args.output,
         sensitivity=args.sensitivity,
+        docker_image=args.docker_image,
+        in_docker_run=args.in_docker_run,
     )
 
 

@@ -7,16 +7,11 @@ def load_json_file(filepath: str) -> Dict[str, Any]:
     """
     Load a JSON file from the given file path.
 
-    Args:
-        filepath (str): Path to the JSON file to load.
-
-    Returns:
-        Dict[str, Any]: Dictionary containing the parsed JSON data.
-
-    Raises:
-        FileNotFoundError: If the file does not exist.
-        json.JSONDecodeError: If the file contains invalid JSON.
-        PermissionError: If there are insufficient permissions to read the file.
+    :param filepath: Path to the JSON file to load.
+    :return: Dictionary containing the parsed JSON data.
+    :raises FileNotFoundError: If the file does not exist.
+    :raises json.JSONDecodeError: If the file contains invalid JSON.
+    :raises PermissionError: If there are insufficient permissions to read the file.
     """
 
     try:
@@ -36,16 +31,10 @@ def get_json_files(directory_path: str) -> List[str]:
     """
     Get a list of all JSON files in the specified directory.
 
-    Args:
-        directory_path (str): Path to the directory to search for JSON files.
-
-    Returns:
-        List[str]: List of absolute paths to all JSON files found in the directory.
-            Returns an empty list if no JSON files are found.
-
-    Raises:
-        FileNotFoundError: If the directory does not exist.
-        PermissionError: If there are insufficient permissions to access the directory.
+    :param directory_path: Path to the directory to search for JSON files.
+    :return: List of absolute paths to all JSON files found in the directory. Returns an empty list if no JSON files are found.
+    :raises FileNotFoundError: If the directory does not exist.
+    :raises PermissionError: If there are insufficient permissions to access the directory.
     """
 
     path = Path(directory_path)
@@ -70,9 +59,8 @@ def save_json(data: Dict[str, Any], filepath: str) -> None:
     """
     Save dictionary to JSON file.
 
-    Args:
-        data (Dict[str, Any]): Dictionary to save.
-        filepath (str): Path where JSON file will be saved.
+    :param data: Dictionary to save.
+    :param filepath: Path where JSON file will be saved.
     """
 
     with open(filepath, "w") as f:

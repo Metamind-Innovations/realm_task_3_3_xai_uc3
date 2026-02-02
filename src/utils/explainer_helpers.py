@@ -1,7 +1,7 @@
 from tqdm import tqdm
 from typing import List, Dict, Any, Literal
 
-from utils.generic_utils import load_json_file
+from generic_utils import load_json_file
 
 
 ATTRIBUTES = [
@@ -30,13 +30,11 @@ MAX_WORKERS = 10
 
 
 def load_all_patients_data(patient_files: List[str]) -> List[Dict[str, Any]]:
-    """Load all patient data files.
+    """
+    Load all patient data files.
 
-    Args:
-        patient_files (List[str]): List of file paths to patient JSON files.
-
-    Returns:
-        List[Dict[str, Any]]: List of successfully loaded patient data dictionaries.
+    :param patient_files: List of file paths to patient JSON files.
+    :return: List of successfully loaded patient data dictionaries.
     """
 
     patients = []
@@ -52,16 +50,13 @@ def load_all_patients_data(patient_files: List[str]) -> List[Dict[str, Any]]:
 
 
 def find_method_name(
-    sensitivity: float,
+        sensitivity: float,
 ) -> Literal["feature_ablation", "feature_perturbation"]:
-    """Determine analysis method based on sensitivity value.
+    """
+    Determine analysis method based on sensitivity value.
 
-    Args:
-        sensitivity (float): Sensitivity level between 0 and 1.
-
-    Returns:
-        Literal["feature_ablation", "feature_perturbation"]: Analysis method name.
-            'feature_ablation' if sensitivity < 0.5, 'feature_perturbation' otherwise.
+    :param sensitivity: Sensitivity level between 0 and 1.
+    :return: Analysis method name. 'feature_ablation' if sensitivity < 0.5, 'feature_perturbation' otherwise.
     """
 
     return "feature_ablation" if sensitivity < 0.5 else "feature_perturbation"

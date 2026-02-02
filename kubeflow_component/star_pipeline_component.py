@@ -1,27 +1,24 @@
 from kfp import dsl, compiler
 from kfp.dsl import Input, Output, Dataset, Model
 
-# TODO: Update code to use online image uploaded to dockerub
 
 # -----------------------
 # Step 1: Download Repo
 # -----------------------
 @dsl.component(base_image="python:3.14-slim")
 def download_repo(
-    github_repo_url: str,
-    project_files: Output[Model],
-    data: Output[Dataset],
-    branch: str = "main",
+        github_repo_url: str,
+        project_files: Output[Model],
+        data: Output[Dataset],
+        branch: str = "main",
 ) -> None:
-    """Download specific scripts and data from a GitHub repository.
-    This component clones a GitHub repository, copies selected Python scripts
-    into the `project_files` output, and the `data` folder into the `data` output.
+    """
+    Download specific scripts and data from a GitHub repository.
 
-    Args:
-        github_repo_url (str): URL of the GitHub repository to clone.
-        project_files (Output[Model]): Output path for project scripts.
-        data (Output[Dataset]): Output path for data folder.
-        branch (str): Branch name to pull from (defaults to 'main').
+    :param github_repo_url: URL of the GitHub repository to clone.
+    :param project_files: Output path for project scripts.
+    :param data: Output path for data folder.
+    :param branch: Branch name to pull from (defaults to 'main').
     """
     import shutil
     from pathlib import Path
@@ -110,23 +107,22 @@ def download_repo(
 # Step 2: Fairness Analysis
 # -----------------------
 @dsl.component(
-    base_image="python:3.14-slim",
-    packages_to_install=["pandas==2.3.3", "tqdm==4.67.1", "requests==2.32.5"],
+    base_image="docker.io/<username>/<image_name>:<tag>",
+    packages_to_install=["pandas==2.3.3", "tqdm==4.67.1"],
 )
 def fairness_analysis(
-    project_files: Input[Model],
-    data: Input[Dataset],
-    fairness_results: Output[Dataset],
+        project_files: Input[Model],
+        data: Input[Dataset],
+        fairness_results: Output[Dataset],
+        docker_image: str,
 ) -> None:
-    """Run fairness and bias analysis for the STAR model.
-    This component installs required Python packages, executes the
-    `fairness_bias_analysis.py` script from the project repository, and writes
-    results to the `fairness_results` output.
+    """
+    Run fairness and bias analysis for the STAR model.
 
-    Args:
-        project_files (Input[Model]): Input path containing project scripts.
-        data (Input[Dataset]): Input path containing `tabular.csv` and `pred.csv`.
-        fairness_results (Output[Dataset]): Output path for fairness analysis results (JSON).
+    :param project_files: Input path containing project scripts.
+    :param data: Input path containing patient JSON files.
+    :param fairness_results: Output path for fairness analysis results (JSON).
+    :param docker_image: Docker image name for STAR model.
     """
     from pathlib import Path
     import subprocess
@@ -151,6 +147,10 @@ def fairness_analysis(
         str(data_path),
         "--output",
         str(results_path / "fairness_analysis.json"),
+        "--docker_image",
+        docker_image,
+        "--in_docker_run",
+        "True",
     ]
     subprocess.run(cmd, check=True)
 
@@ -165,18 +165,16 @@ def fairness_analysis(
     packages_to_install=["matplotlib==3.10.7"],
 )
 def fairness_visualization(
-    project_files: Input[Model],
-    fairness_results: Input[Dataset],
-    fairness_plots: Output[Dataset],
+        project_files: Input[Model],
+        fairness_results: Input[Dataset],
+        fairness_plots: Output[Dataset],
 ) -> None:
-    """Create visualizations for fairness and bias analysis results.
-    This component generates bar charts showing fairness metrics across
-    demographic groups.
+    """
+    Create visualizations for fairness and bias analysis results.
 
-    Args:
-        project_files (Input[Model]): Input path containing project scripts.
-        fairness_results (Input[Dataset]): Input path containing fairness_analysis.json.
-        fairness_plots (Output[Dataset]): Output path for visualization PNG files.
+    :param project_files: Input path containing project scripts.
+    :param fairness_results: Input path containing fairness_analysis.json.
+    :param fairness_plots: Output path for visualization PNG files.
     """
     from pathlib import Path
     import subprocess
@@ -219,29 +217,27 @@ def fairness_visualization(
 # Step 4: Explainer Analysis
 # -----------------------
 @dsl.component(
-    base_image="python:3.14-slim",
+    base_image="docker.io/gigakos/glucomeo:latest",
     packages_to_install=[
-        "requests==2.32.5",
-        "tqdm==4.67.1",
-        "numpy==2.3.5",
+        "tqdm==4.67.2",
+        "numpy==2.4.2",
     ],
 )
 def explainer_analysis(
-    project_files: Input[Model],
-    data: Input[Dataset],
-    explainer_results: Output[Dataset],
-    sensitivity: float,
+        project_files: Input[Model],
+        data: Input[Dataset],
+        explainer_results: Output[Dataset],
+        sensitivity: float,
+        docker_image: str,
 ) -> None:
-    """Run explainer analysis on the STAR model.
-    This component installs the required Python packages, executes
-    the `explainer.py` script from the project repository,
-    and writes the results to the `explainer_results` output.
+    """
+    Run explainer analysis on the STAR model.
 
-    Args:
-        project_files (Input[Model]): Input path containing project scripts.
-        data (Input[Dataset]): Input path containing `tabular_data.csv`.
-        explainer_results (Output[Dataset]): Output path for explainer results.
-        sensitivity (float): Sensitivity parameter for the explainer script.
+    :param project_files: Input path containing project scripts.
+    :param data: Input path containing patient JSON files.
+    :param explainer_results: Output path for explainer results.
+    :param sensitivity: Sensitivity parameter for the explainer script.
+    :param docker_image: Docker image name for STAR model.
     """
     from pathlib import Path
     import subprocess
@@ -268,6 +264,10 @@ def explainer_analysis(
         str(sensitivity),
         "--output",
         str(results_path),
+        "--docker_image",
+        docker_image,
+        "--in_docker_run",
+        "True",
     ]
     subprocess.run(cmd, check=True)
 
@@ -282,21 +282,18 @@ def explainer_analysis(
     packages_to_install=["tqdm==4.67.1", "pandas==2.3.3", "matplotlib==3.10.7"],
 )
 def explainer_visualization(
-    project_files: Input[Model],
-    explainer_results: Input[Dataset],
-    explainer_plots: Output[Dataset],
-    sensitivity: float,
+        project_files: Input[Model],
+        explainer_results: Input[Dataset],
+        explainer_plots: Output[Dataset],
+        sensitivity: float,
 ) -> None:
-    """Create visualizations for explainer analysis results.
-    This component generates plots (bar charts) based on the
-    explainability method used.
+    """
+    Create visualizations for explainer analysis results.
 
-    Args:
-        project_files (Input[Model]): Input path containing project scripts.
-        explainer_results (Input[Dataset]): Input path containing explainer results
-            (feature_ablation_analysis.json or feature_perturbation_analysis.json).
-        explainer_plots (Output[Dataset]): Output path for visualization PNG files.
-        sensitivity (float): Sensitivity parameter to determine which method was used.
+    :param project_files: Input path containing project scripts.
+    :param explainer_results: Input path containing explainer results.
+    :param explainer_plots: Output path for visualization PNG files.
+    :param sensitivity: Sensitivity parameter to determine which method was used.
     """
     from pathlib import Path
     import subprocess
@@ -354,18 +351,19 @@ def explainer_visualization(
     description="Runs fairness-bias and explainer analyses.",
 )
 def star_pipeline(
-    github_repo_url: str,
-    branch: str = "main",
-    sensitivity: float = 0.3,
+        github_repo_url: str,
+        docker_image: str,
+        branch: str = "main",
+        sensitivity: float = 0.3,
 ):
-    """Pipeline to run STAR model fairness/bias and explainer analyses.
-
-    Args:
-        github_repo_url (str): URL of the GitHub repository containing the STAR code and data.
-        branch (str): Branch name to pull from (defaults to 'main').
-        sensitivity (float): Sensitivity parameter for the explainer analysis. Defaults to 0.3.
     """
+    Pipeline to run STAR model fairness/bias and explainer analyses.
 
+    :param github_repo_url: URL of the GitHub repository containing the STAR code and data.
+    :param docker_image: Docker image name for STAR model.
+    :param branch: Branch name to pull from (defaults to 'main').
+    :param sensitivity: Sensitivity parameter for the explainer analysis. Defaults to 0.3.
+    """
     # Step 1: Download repository
     repo_task = download_repo(github_repo_url=github_repo_url, branch=branch)
     repo_task.set_caching_options(False)
@@ -378,13 +376,14 @@ def star_pipeline(
     fairness_task = fairness_analysis(
         project_files=repo_task.outputs["project_files"],
         data=repo_task.outputs["data"],
+        docker_image=docker_image,
     )
     fairness_task.after(repo_task)
     fairness_task.set_caching_options(False)
-    fairness_task.set_cpu_request("1000m")
-    fairness_task.set_cpu_limit("2000m")
-    fairness_task.set_memory_request("2Gi")
-    fairness_task.set_memory_limit("4Gi")
+    fairness_task.set_cpu_request("2000m")
+    fairness_task.set_cpu_limit("4000m")
+    fairness_task.set_memory_request("4Gi")
+    fairness_task.set_memory_limit("8Gi")
 
     # Step 3: Fairness visualization
     fairness_viz_task = fairness_visualization(
@@ -403,13 +402,14 @@ def star_pipeline(
         project_files=repo_task.outputs["project_files"],
         data=repo_task.outputs["data"],
         sensitivity=sensitivity,
+        docker_image=docker_image,
     )
     explainer_task.after(repo_task)
     explainer_task.set_caching_options(False)
-    explainer_task.set_cpu_request("1000m")
-    explainer_task.set_cpu_limit("2000m")
-    explainer_task.set_memory_request("2Gi")
-    explainer_task.set_memory_limit("4Gi")
+    explainer_task.set_cpu_request("2000m")
+    explainer_task.set_cpu_limit("4000m")
+    explainer_task.set_memory_request("4Gi")
+    explainer_task.set_memory_limit("8Gi")
 
     # Step 5: Explainer visualization
     explainer_viz_task = explainer_visualization(
