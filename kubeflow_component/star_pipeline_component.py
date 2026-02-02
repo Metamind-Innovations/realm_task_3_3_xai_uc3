@@ -107,7 +107,7 @@ def download_repo(
 # Step 2: Fairness Analysis
 # -----------------------
 @dsl.component(
-    base_image="docker.io/<username>/<image_name>:<tag>",
+    base_image="python:3.14-slim",
     packages_to_install=["pandas==2.3.3", "tqdm==4.67.1"],
 )
 def fairness_analysis(
