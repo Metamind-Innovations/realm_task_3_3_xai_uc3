@@ -3,6 +3,8 @@ import requests
 import time
 import json
 
+# TODO: Run with docker run
+# TODO: Modify the sh script to run in cmd for kubeflow
 
 class STARWrapper:
     """

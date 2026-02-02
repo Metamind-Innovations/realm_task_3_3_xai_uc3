@@ -1,6 +1,7 @@
 from kfp import dsl, compiler
 from kfp.dsl import Input, Output, Dataset, Model
 
+# TODO: Update code to use online image uploaded to dockerub
 
 # -----------------------
 # Step 1: Download Repo
