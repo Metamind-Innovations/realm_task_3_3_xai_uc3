@@ -107,8 +107,8 @@ def download_repo(
 # Step 2: Fairness Analysis
 # -----------------------
 @dsl.component(
-    base_image="docker.io/gigakos/glucomeo:latest",
-    packages_to_install=["pandas==2.3.3", "tqdm==4.67.1"],
+    base_image="python:3.14-slim",
+    packages_to_install=["pandas==3.0.0", "tqdm==4.67.2"],
 )
 def fairness_analysis(
         project_files: Input[Model],
@@ -215,8 +215,9 @@ def fairness_visualization(
 # Step 4: Explainer Analysis
 # -----------------------
 @dsl.component(
-    base_image="docker.io/gigakos/glucomeo:latest",
+    base_image="python:3.14-slim",
     packages_to_install=[
+        "pandas==3.0.0",
         "tqdm==4.67.2",
         "numpy==2.4.2",
     ],
