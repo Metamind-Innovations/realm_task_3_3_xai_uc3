@@ -1,7 +1,7 @@
 from tqdm import tqdm
 from typing import List, Dict, Any, Literal
 
-from generic_utils import load_json_file
+from utils.generic_utils import load_json_file
 
 
 ATTRIBUTES = [
@@ -26,8 +26,6 @@ ATTRIBUTES = [
     "nutritionBolus.carbsConcentration",
 ]
 
-MAX_WORKERS = 10
-
 
 def load_all_patients_data(patient_files: List[str]) -> List[Dict[str, Any]]:
     """
@@ -43,7 +41,7 @@ def load_all_patients_data(patient_files: List[str]) -> List[Dict[str, Any]]:
         try:
             patient = load_json_file(filepath)
             patients.append(patient)
-        except Exception as e:
+        except Exception:
             continue
 
     return patients
