@@ -107,7 +107,7 @@ def download_repo(
 # Step 2: Fairness Analysis
 # -----------------------
 @dsl.component(
-    base_image="python:3.14-slim",
+    base_image="docker.io/gigakos/glucomeo:latest",
     packages_to_install=["pandas==2.3.3", "tqdm==4.67.1"],
 )
 def fairness_analysis(
@@ -149,8 +149,6 @@ def fairness_analysis(
         str(results_path / "fairness_analysis.json"),
         "--docker_image",
         docker_image,
-        "--in_docker_run",
-        "True",
     ]
     subprocess.run(cmd, check=True)
 
@@ -266,8 +264,6 @@ def explainer_analysis(
         str(results_path),
         "--docker_image",
         docker_image,
-        "--in_docker_run",
-        "True",
     ]
     subprocess.run(cmd, check=True)
 
@@ -426,5 +422,5 @@ def star_pipeline(
 
 
 if __name__ == "__main__":
-    compiler = compiler.Compiler()
-    compiler.compile(pipeline_func=star_pipeline, package_path="star_pipeline.yaml")
+    kfp_compiler = compiler.Compiler()
+    kfp_compiler.compile(pipeline_func=star_pipeline, package_path="star_pipeline.yaml")
