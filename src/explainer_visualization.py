@@ -135,13 +135,15 @@ def visualize_feature_importance(
             "Lower negative values indicate features that are not important for model predictions. "
             "Values range between [-1, 1]."
         )
-    if method == "feature_perturbation":
+    elif method == "feature_perturbation":
         explanation_text = (
             "Feature Perturbation: Shows impact when features are modified. "
             "Higher positive values indicate features that are more important for accurate predictions. "
             "Lower negative values indicate features that are not important for model predictions. "
             "Values range between [-1, 1]."
         )
+    else:
+        raise ValueError(f"Unknown method: {method}")
 
     # Create title
     title = f"Sensitivity [0, 1]: {sensitivity:.2f} | Method: {method_modified}"
