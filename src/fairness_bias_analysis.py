@@ -2,8 +2,6 @@ import argparse
 import pandas as pd
 from typing import Dict, Any, Literal
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
 
 from utils.generic_utils import load_json_file, get_json_files, save_json
 from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
@@ -108,67 +106,17 @@ def calculate_fairness_metrics(
     return metrics
 
 
-def process_single_patient(filepath: str, model: STARDockerWrapper) -> dict:
-    """
-    Process one patient JSON file and get predictions with demographics.
-
-    :param filepath: Path to patient JSON file
-    :param model: STAR Docker wrapper instance
-    :return: Result dictionary with predictions, demographics, and ground truth
-    """
-    try:
-        patient_data = load_json_file(filepath)
-        pred_time, actual_value = extract_prediction_info(patient_data)
-
-        pred_interval = model.predict(
-            patient_data=patient_data, prediction_time=pred_time
-        )
-
-        interval_center = calculate_interval_midpoint(pred_interval)
-
-        # Extract demographics from patient data
-        episode = patient_data["episodes"][0]
-        age = episode.get("age", None)
-        gender = episode.get("gender", None)  # False=Male, True=Female
-
-        return {
-            "file_name": Path(filepath).name,
-            "age": age,
-            "gender": "Female" if gender else "Male",
-            "ground_truth": actual_value,
-            "BG5TH": pred_interval["BG5TH"],
-            "BG95TH": pred_interval["BG95TH"],
-            "interval_center": interval_center,
-            "success": True,
-            "error_message": None,
-        }
-    except Exception as e:
-        return {
-            "file_name": Path(filepath).name,
-            "age": None,
-            "gender": None,
-            "ground_truth": None,
-            "BG5TH": None,
-            "BG95TH": None,
-            "interval_center": None,
-            "success": False,
-            "error_message": str(e),
-        }
-
-
 def predict_glucose_levels(
         data_path: str,
         docker_image: str = "glucomeo",
         in_docker_run: bool = False,
-        max_workers: int = 10
 ) -> pd.DataFrame:
     """
-    Process patient JSON files in parallel and return results with demographics.
+    Process patient JSON files in batch and return results with demographics.
 
     :param data_path: Path to directory containing patient JSON files
     :param docker_image: Docker image name for STAR model
     :param in_docker_run: Whether running inside Docker container
-    :param max_workers: Number of parallel workers for API calls
     :return: Results with demographics, predictions, and ground truth
     """
     patient_files = get_json_files(data_path)
@@ -178,17 +126,47 @@ def predict_glucose_levels(
 
     model_wrapper = STARDockerWrapper(docker_image=docker_image, in_docker_run=in_docker_run)
 
-    results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(process_single_patient, file, model_wrapper)
-            for file in patient_files
-        ]
+    predictions_df = model_wrapper.predict_batch(patient_files)
 
-        for future in tqdm(
-                as_completed(futures), total=len(patient_files), desc="Processing patients"
-        ):
-            results.append(future.result())
+    results = []
+    for idx, filepath in enumerate(patient_files):
+        try:
+            patient_data = load_json_file(filepath)
+            pred_time, actual_value = extract_prediction_info(patient_data)
+
+            # Extract demographics from patient data
+            episode = patient_data["episodes"][0]
+            age = episode.get("age", None)
+            gender = episode.get("gender", None) # False=Male, True=Female
+
+            interval_center = calculate_interval_midpoint({
+                "BG5TH": predictions_df.iloc[idx]["BG5TH"],
+                "BG95TH": predictions_df.iloc[idx]["BG95TH"]
+            })
+
+            results.append({
+                "file_name": Path(filepath).name,
+                "age": age,
+                "gender": "Female" if gender else "Male",
+                "ground_truth": actual_value,
+                "BG5TH": predictions_df.iloc[idx]["BG5TH"],
+                "BG95TH": predictions_df.iloc[idx]["BG95TH"],
+                "interval_center": interval_center,
+                "success": True,
+                "error_message": None,
+            })
+        except Exception as e:
+            results.append({
+                "file_name": Path(filepath).name,
+                "age": None,
+                "gender": None,
+                "ground_truth": None,
+                "BG5TH": None,
+                "BG95TH": None,
+                "interval_center": None,
+                "success": False,
+                "error_message": str(e),
+            })
 
     df = pd.DataFrame(results)
 
@@ -216,7 +194,7 @@ def fairness_bias_analysis(
     )
 
     # Filter only successful predictions
-    preds_dem_success = preds_dem[preds_dem["success"] == True].copy()
+    preds_dem_success = preds_dem[preds_dem["success"]].copy()
 
     if preds_dem_success.empty:
         raise ValueError(
@@ -276,7 +254,7 @@ def main() -> None:
     parser.add_argument(
         "--in_docker_run",
         action="store_true",
-        default="False",
+        default=False,
         help="Whether running inside Docker container (default: False)",
     )
 

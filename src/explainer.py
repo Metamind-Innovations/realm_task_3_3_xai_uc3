@@ -1,10 +1,11 @@
 import argparse
 import copy
+import json
+import shutil
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Callable, List, Tuple, Literal, Optional
+from typing import Dict, Any, Callable, List, Tuple, Literal
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils.generic_utils import get_json_files, save_json
 from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
@@ -12,7 +13,6 @@ from utils.explainer_helpers import (
     find_method_name,
     load_all_patients_data,
     ATTRIBUTES,
-    MAX_WORKERS,
 )
 from STAR_model import STARDockerWrapper
 
@@ -215,63 +215,49 @@ def perturb_categorical(
 # ============================================================================
 # MAE COMPUTATION
 # ============================================================================
-def process_single_patient(
-        data: Dict[str, Any],
-        star_api: STARDockerWrapper,
-) -> Optional[float]:
-    """
-    Process single patient and compute absolute error.
-
-    :param data: Patient data dictionary.
-    :param star_api: STAR Docker wrapper instance.
-    :return: Absolute error between actual and predicted values, or None if failed.
-    """
-    try:
-        pred_time, actual_value = extract_prediction_info(data)
-        pred_interval = star_api.predict(patient_data=data, prediction_time=pred_time)
-
-        # Calculate midpoint of prediction interval
-        predicted_midpoint = calculate_interval_midpoint(pred_interval)
-
-        # Calculate absolute error
-        ae = abs(actual_value - predicted_midpoint)
-
-        return ae
-
-    except Exception as e:
-        return None
-
-
 def compute_mae(
         patients_data: List[Dict[str, Any]],
-        star_api: STARDockerWrapper,
+        star_docker: STARDockerWrapper,
+        temp_dir: Path,
 ) -> float:
     """
-    Compute Mean Absolute Error across all patients.
+    Compute Mean Absolute Error across all patients using batch prediction.
 
     :param patients_data: List of patient data dictionaries.
-    :param star_api: STAR Docker wrapper instance.
+    :param star_docker: STAR Docker wrapper instance.
+    :param temp_dir: Temporary directory for storing patient files.
     :return: Mean absolute error across all successfully processed patients.
     """
 
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    patient_files = []
+    for idx, patient_data in enumerate(patients_data):
+        temp_file = temp_dir / f"patient_{idx}.json"
+        with open(temp_file, 'w') as f:
+            json.dump(patient_data, f)
+        patient_files.append(str(temp_file))
+
+    predictions_df = star_docker.predict_batch(patient_files)
+
     aes = []
+    for idx, patient_data in enumerate(patients_data):
+        try:
+            pred_time, actual_value = extract_prediction_info(patient_data)
+            predicted_midpoint = calculate_interval_midpoint({
+                "BG5TH": predictions_df.iloc[idx]["BG5TH"],
+                "BG95TH": predictions_df.iloc[idx]["BG95TH"]
+            })
+            ae = abs(actual_value - predicted_midpoint)
+            aes.append(ae)
+        except Exception:
+            continue
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [
-            executor.submit(process_single_patient, pat, star_api)
-            for pat in patients_data
-        ]
-
-        for future in tqdm(
-                as_completed(futures),
-                total=len(patients_data),
-                desc="Computing MAE",
-                leave=False,
-        ):
-            ae = future.result()
-
-            if ae is not None:
-                aes.append(ae)
+    for pf in patient_files:
+        try:
+            Path(pf).unlink(missing_ok=True)
+        except Exception:
+            pass
 
     if not aes:
         return 0.0
@@ -286,20 +272,21 @@ def compute_mae(
 # ============================================================================
 def analyze_feature_importance(
         patients_data: List[Dict[str, Any]],
-        star_api: STARDockerWrapper,
+        star_docker: STARDockerWrapper,
         analysis_type: Literal["feature_ablation", "feature_perturbation"],
+        temp_dir: Path,
 ) -> Dict[str, float]:
     """
     Analyze feature importance using ablation or perturbation.
 
     :param patients_data: List of patient data dictionaries.
-    :param star_api: STAR Docker wrapper instance.
+    :param star_docker: STAR Docker wrapper instance.
     :param analysis_type: Type of analysis.
+    :param temp_dir: Temporary directory for storing patient files.
     :return: Dictionary mapping attribute names to normalized importance scores (0-1).
     """
 
-    # Compute baseline MAE
-    baseline_mae = compute_mae(patients_data, star_api=star_api)
+    baseline_mae = compute_mae(patients_data, star_docker=star_docker, temp_dir=temp_dir / "baseline")
 
     if analysis_type == "feature_ablation":
         transform_functions = build_ablation_registry()
@@ -340,11 +327,15 @@ def analyze_feature_importance(
         for d_ in tqdm(patients_data, desc="Transforming data", leave=False):
             try:
                 transformed_data.append(current_attr_fn(d_))
-            except Exception as e:
+            except Exception:
                 continue
 
         # Compute MAE after transformation
-        transformed_mae = compute_mae(patients_data=transformed_data, star_api=star_api)
+        transformed_mae = compute_mae(
+            patients_data=transformed_data,
+            star_docker=star_docker,
+            temp_dir=temp_dir / f"transformed_{attr_name.replace('.', '_')}"
+        )
 
         # Feature importance
         # Positive = INCREASE in MAE (higher MAE = worse predictions, feature is good for the model)
@@ -409,14 +400,18 @@ def feature_importance_analysis(
     if not patients_data:
         raise ValueError("No patients successfully loaded")
 
-    star_api = STARDockerWrapper(docker_image=docker_image, in_docker_run=in_docker_run)
+    star_docker = STARDockerWrapper(docker_image=docker_image, in_docker_run=in_docker_run)
 
-    # Run analysis
+    temp_dir = Path(output_path) / "temp_explainer"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
     results = analyze_feature_importance(
-        patients_data, star_api=star_api, analysis_type=method
+        patients_data, star_docker=star_docker, analysis_type=method, temp_dir=temp_dir
     )
 
-    # Prepare output
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+
     output_path = Path(output_path)
     output_path = output_path / f"{method}_analysis.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)

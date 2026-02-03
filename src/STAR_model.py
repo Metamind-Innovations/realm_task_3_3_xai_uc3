@@ -1,20 +1,20 @@
 import subprocess
-import json
+import pandas as pd
 from pathlib import Path
-from typing import Dict, Any
-import uuid
+from typing import List
+import shutil
 
 
 class STARDockerWrapper:
     def __init__(
             self,
-            in_mount: str = "temp_mount",
-            out_mount: str = "temp_mount",
+            in_mount: str = "temp_mount/in",
+            out_mount: str = "temp_mount/out",
             docker_image: str = "glucomeo",
             in_docker_run: bool = False,
     ):
         """
-        Wrapper for the STAR Dockerized model to allow prediction from Python.
+        Wrapper for the STAR Dockerized model to allow batch prediction from Python.
 
         :param in_mount: Local directory to mount as `/home/in` inside the container.
         :param out_mount: Local directory to mount as `/home/out` inside the container.
@@ -26,168 +26,147 @@ class STARDockerWrapper:
         self.out_mount = Path(out_mount).resolve()
         self.in_docker_run = in_docker_run
 
-    def _validate_patient_data(self, patient_data: Dict[str, Any]) -> None:
+        if not in_docker_run:
+            docker_cmd = shutil.which("docker")
+            if docker_cmd is None:
+                raise RuntimeError(
+                    "Docker executable not found in PATH. "
+                    "Please ensure Docker Desktop is installed and running, "
+                    "or add Docker to your system PATH."
+                )
+            self.docker_executable = docker_cmd
+
+            try:
+                subprocess.run(
+                    [self.docker_executable, "version"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    f"Docker is installed but not responding correctly.\n"
+                    f"Error: {e.stderr if e.stderr else e.stdout}\n"
+                    f"Please ensure Docker Desktop is running."
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(
+                    "Docker command timed out. Please ensure Docker Desktop is running."
+                )
+            except FileNotFoundError:
+                raise RuntimeError(
+                    f"Cannot execute Docker at: {self.docker_executable}\n"
+                    f"Please ensure Docker Desktop is installed and running."
+                )
+
+    def _format_volume_mount(self, local_path: Path, container_path: str) -> str:
         """
-        Validate that patient data contains required fields.
+        Format volume mount string for Docker, handling Windows paths.
 
-        :param patient_data: Patient data dictionary.
-        :raises ValueError: If required fields are missing or invalid.
+        :param local_path: Local filesystem path.
+        :param container_path: Container filesystem path.
+        :return: Formatted volume mount string.
         """
-        required_fields = ["__class", "hospitalID", "updateTime", "episodes"]
+        # Use the path as-is on Windows - Docker Desktop handles Windows paths with backslashes
+        return f"{str(local_path)}:{container_path}"
 
-        for field in required_fields:
-            if field not in patient_data:
-                raise ValueError(f"Missing required field in patient data: {field}")
-
-        if not patient_data["episodes"]:
-            raise ValueError("Patient data must contain at least one episode")
-
-        # Check for required episode fields
-        episode = patient_data["episodes"][0]
-        required_episode_fields = [
-            "bloodGlucose",
-            "insulinInfusion",
-            "nutritionInfusion",
-        ]
-
-        for field in required_episode_fields:
-            if field not in episode:
-                raise ValueError(f"Missing required field in episode: {field}")
-
-    def _validate_prediction_time(
-            self, patient_data: Dict[str, Any], prediction_time: int
-    ) -> None:
+    def predict_batch(self, patient_files: List[str]) -> pd.DataFrame:
         """
-        Validate that prediction time is within acceptable range.
+        Run batch prediction on multiple patient files using Docker.
 
-        :param patient_data: Patient data dictionary.
-        :param prediction_time: Unix epoch time in milliseconds.
-        :raises ValueError: If prediction time is outside valid range.
+        :param patient_files: List of paths to patient JSON files.
+        :return: DataFrame with columns BG5TH and BG95TH for each patient.
+        :raises RuntimeError: If Docker execution fails or output file not found.
         """
-        update_time = patient_data["updateTime"]
-        max_time = update_time + (180 * 60 * 1000)
-
-        if prediction_time < update_time:
-            raise ValueError(
-                f"Prediction time ({prediction_time}) must be >= updateTime ({update_time})"
-            )
-
-        if prediction_time > max_time:
-            raise ValueError(
-                f"Prediction time ({prediction_time}) must be <= updateTime + 180 minutes ({max_time})"
-            )
-
-    def predict(
-            self,
-            patient_data: Dict[str, Any],
-            prediction_time: int,
-    ) -> Dict[str, float]:
-        """
-        Predict blood glucose range at a specific time using Docker.
-
-        :param patient_data: Complete patient data JSON object.
-        :param prediction_time: Unix epoch time in milliseconds when to predict the blood glucose range.
-        :return: Dictionary containing prediction interval with keys BG5TH and BG95TH.
-        :raises ValueError: If patient data or prediction time validation fails.
-        :raises RuntimeError: If Docker execution fails.
-        """
-        # Validate inputs
-        self._validate_patient_data(patient_data)
-        self._validate_prediction_time(patient_data, prediction_time)
-
         self.in_mount.mkdir(parents=True, exist_ok=True)
         self.out_mount.mkdir(parents=True, exist_ok=True)
-        u_id = uuid.uuid4().hex
 
-        tmp_in_filename = f"patient_{u_id}.json"
-        input_file = self.in_mount / tmp_in_filename
+        for patient_file in patient_files:
+            src = Path(patient_file)
+            dst = self.in_mount / src.name
+            shutil.copy2(src, dst)
 
-        request_payload = {
-            "patient": patient_data,
-            "predictionTime": prediction_time
-        }
+        in_volume = self._format_volume_mount(self.in_mount, "/home/in")
+        out_volume = self._format_volume_mount(self.out_mount, "/home/out")
 
-        with open(input_file, "w") as f:
-            json.dump(request_payload, f)
-
-        tmp_out_filename = f"prediction_{u_id}.json"
-        output_file = self.out_mount / tmp_out_filename
-
-        if not self.in_docker_run:
-            cmd = [
-                "docker",
-                "run",
-                "--rm",
-                "-e", "AEONICS_JAVA_OPTIONS=-Xmx1g",
-                "-e", "AEONICS_LICENSE_STORE_PATH=/opt/aeonics/aeonics.license",
-                "-e", "AEONICS_LICENSE_STORE_PASS=secret",
-                "-e", "AEONICS_ACCEPT_UNSIGNED_MODULES=true",
-                "-e", "AEONICS_LOG_LEVEL=1000",
-                "-e", "REALM_INPUT_DIR=/home/in",
-                "-e", "REALM_OUTPUT_DIR=/home/out",
-                "-w", "/opt/aeonics",
-                "-u", "0",
-                "-v", f"{self.in_mount}:/home/in",
-                "-v", f"{self.out_mount}:/home/out",
-                self.docker_image,
-            ]
-        else:
-            cmd = [
-                "/opt/aeonics/star_predict",
-                "--input",
-                str(input_file),
-                "--output",
-                str(output_file),
-            ]
+        cmd = [
+            self.docker_executable,
+            "run",
+            "--rm",
+            "-e", "AEONICS_JAVA_OPTIONS=-Xmx1g",
+            "-e", "AEONICS_LICENSE_STORE_PATH=/opt/aeonics/aeonics.license",
+            "-e", "AEONICS_LICENSE_STORE_PASS=secret",
+            "-e", "AEONICS_ACCEPT_UNSIGNED_MODULES=true",
+            "-e", "AEONICS_LOG_LEVEL=1000",
+            "-e", "REALM_INPUT_DIR=/home/in",
+            "-e", "REALM_OUTPUT_DIR=/home/out",
+            "-w", "/opt/aeonics",
+            "-u", "0",
+            "-v", in_volume,
+            "-v", out_volume,
+            self.docker_image,
+        ]
 
         try:
             subprocess.run(cmd, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
-            raise RuntimeError(
-                f"Docker execution failed: {e.stderr if e.stderr else e.stdout}"
-            )
+            error_msg = f"Docker execution failed.\nCommand: {' '.join(cmd)}"
+            if e.stderr:
+                error_msg += f"\nStderr: {e.stderr}"
+            if e.stdout:
+                error_msg += f"\nStdout: {e.stdout}"
+            raise RuntimeError(error_msg)
 
+        output_file = self.out_mount / "results.csv"
         if not output_file.exists():
             raise RuntimeError(f"Output file not generated: {output_file}")
 
-        with open(output_file, "r") as f:
-            result = json.load(f)
+        results_df = pd.read_csv(output_file)
 
-        if "BG5TH" not in result or "BG95TH" not in result:
+        if "BG5TH" not in results_df.columns or "BG95TH" not in results_df.columns:
             raise ValueError(
-                f"Docker output missing required fields. Got: {result.keys()}"
+                f"Output CSV missing required columns. Got: {results_df.columns.tolist()}"
             )
 
-        prediction_interval = {
-            "BG5TH": result["BG5TH"],
-            "BG95TH": result["BG95TH"],
-        }
-
+        # Cleanup temporary directories
         try:
-            input_file.unlink(missing_ok=True)
-            output_file.unlink(missing_ok=True)
-        except Exception as e:
-            print(f"Warning: could not delete temp files: {e}")
+            if self.in_mount.exists():
+                shutil.rmtree(self.in_mount, ignore_errors=True)
 
-        return prediction_interval
+            if self.out_mount.exists():
+                shutil.rmtree(self.out_mount, ignore_errors=True)
 
-    def validate_prediction(
+            # Remove parent temp_mount directory
+            temp_mount_parent = self.in_mount.parent
+            if temp_mount_parent.exists() and temp_mount_parent.name == "temp_mount":
+                # Remove all remaining files in temp_mount
+                for item in temp_mount_parent.iterdir():
+                    if item.is_file():
+                        item.unlink(missing_ok=True)
+                    elif item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                # Remove the directory itself
+                temp_mount_parent.rmdir()
+        except Exception:
+            pass  # Silent cleanup
+
+        return results_df
+
+    def validate_predictions(
             self,
-            interval: Dict[str, float],
-            ground_truth: float,
-    ) -> int:
+            predictions: pd.DataFrame,
+            ground_truth: pd.Series,
+    ) -> pd.Series:
         """
-        Check whether ground truth value falls within the predicted range.
+        Check whether ground truth values fall within predicted ranges.
 
-        :param interval: Prediction interval with BG5TH and BG95TH.
-        :param ground_truth: Actual blood glucose value to compare against the last predicted range.
-        :return: Binary prediction correctness indicator (1 if inside, 0 otherwise).
+        :param predictions: DataFrame with BG5TH and BG95TH columns.
+        :param ground_truth: Series of actual blood glucose values.
+        :return: Series of binary indicators (1 if inside range, 0 otherwise).
         """
+        within_lower_bound = ground_truth >= predictions["BG5TH"]
+        within_upper_bound = ground_truth <= predictions["BG95TH"]
+        is_inside = within_lower_bound & within_upper_bound
 
-        # Check if ground truth is within the predicted range
-        bg_5th = interval["BG5TH"]
-        bg_95th = interval["BG95TH"]
-
-        is_inside = int(bg_5th <= ground_truth <= bg_95th)
-
-        return is_inside
+        return is_inside.astype(int)
