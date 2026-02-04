@@ -1,10 +1,10 @@
 from kfp import dsl, compiler
 from kfp.dsl import Input, Output, Dataset, Model
 
+# Insert your dockerhub image below (e.g. "docker.io/<username>/<image_name>:<tag>")
+DOCKER_IMAGE = "<docker_image>"
 
-# -----------------------
-# Step 1: Download Repo
-# -----------------------
+
 @dsl.component(base_image="python:3.14-slim")
 def download_repo(
         github_repo_url: str,
@@ -12,8 +12,7 @@ def download_repo(
         data: Output[Dataset],
         branch: str = "main",
 ) -> None:
-    """
-    Download specific scripts and data from a GitHub repository.
+    """Download specific scripts and data from a GitHub repository.
 
     :param github_repo_url: URL of the GitHub repository to clone.
     :param project_files: Output path for project scripts.
@@ -103,9 +102,38 @@ def download_repo(
         print("Warning: data folder not found in repo")
 
 
-# -----------------------
-# Step 2: Fairness Analysis
-# -----------------------
+@dsl.container_component
+def star_predictions(
+        input_data: Input[Dataset],
+        predictions: Output[Dataset],
+):
+    """Run STAR model predictions on patient JSON files.
+
+    :param input_data: Input path containing patient JSON files.
+    :param predictions: Output path for predictions CSV.
+    """
+    command_str = f"""
+        set -e
+        export AEONICS_JAVA_OPTIONS="-Xmx1g"
+        export AEONICS_LICENSE_STORE_PATH="/opt/aeonics/aeonics.license"
+        export AEONICS_LICENSE_STORE_PASS="secret"
+        export AEONICS_ACCEPT_UNSIGNED_MODULES="true"
+        export AEONICS_LOG_LEVEL="1000"
+        export REALM_INPUT_DIR="{input_data.path}"
+        export REALM_OUTPUT_DIR="{predictions.path}"
+        mkdir -p "{predictions.path}"
+        cd /opt/aeonics
+        /opt/aeonics/jre/bin/java -Xmx1g -jar aeonics.jar
+        [ -f "{predictions.path}/results.csv" ] || exit 1
+    """
+
+    return dsl.ContainerSpec(
+        image=DOCKER_IMAGE,
+        command=["sh", "-c"],
+        args=[command_str]
+    )
+
+
 @dsl.component(
     base_image="python:3.14-slim",
     packages_to_install=["pandas==3.0.0", "tqdm==4.67.2"],
@@ -113,16 +141,15 @@ def download_repo(
 def fairness_analysis(
         project_files: Input[Model],
         data: Input[Dataset],
+        predictions: Input[Dataset],
         fairness_results: Output[Dataset],
-        docker_image: str,
 ) -> None:
-    """
-    Run fairness and bias analysis for the STAR model.
+    """Run fairness and bias analysis using predictions from STAR model.
 
     :param project_files: Input path containing project scripts.
     :param data: Input path containing patient JSON files.
+    :param predictions: Input path containing STAR predictions CSV.
     :param fairness_results: Output path for fairness analysis results (JSON).
-    :param docker_image: Docker image name for STAR model.
     """
     from pathlib import Path
     import subprocess
@@ -130,6 +157,7 @@ def fairness_analysis(
     # Prepare paths
     proj_path = Path(project_files.path)
     data_path = Path(data.path)
+    predictions_path = Path(predictions.path)
     results_path = Path(fairness_results.path)
     results_path.mkdir(parents=True, exist_ok=True)
 
@@ -138,26 +166,33 @@ def fairness_analysis(
     if not script.exists():
         raise FileNotFoundError(f"Fairness analyzer script not found at {script}")
 
+    predictions_csv = predictions_path / "results.csv"
+    if not predictions_csv.exists():
+        pred_files = list(predictions_path.glob("*.csv"))
+        if pred_files:
+            predictions_csv = pred_files[0]
+        else:
+            raise FileNotFoundError(f"No predictions CSV found in {predictions_path}")
+
     print(f"Running fairness analysis with {script}")
+    print(f"Data path: {data_path}")
+    print(f"Predictions: {predictions_csv}")
 
     cmd = [
         "python",
         str(script),
         "--data_path",
         str(data_path),
+        "--predictions_path",
+        str(predictions_csv),
         "--output",
         str(results_path / "fairness_analysis.json"),
-        "--docker_image",
-        docker_image,
     ]
     subprocess.run(cmd, check=True)
 
     print(f"Fairness analysis finished. Results saved to {results_path}")
 
 
-# -----------------------
-# Step 3: Fairness Bias Visualization
-# -----------------------
 @dsl.component(
     base_image="python:3.14-slim",
     packages_to_install=["matplotlib==3.10.7"],
@@ -167,8 +202,7 @@ def fairness_visualization(
         fairness_results: Input[Dataset],
         fairness_plots: Output[Dataset],
 ) -> None:
-    """
-    Create visualizations for fairness and bias analysis results.
+    """Create visualizations for fairness and bias analysis results.
 
     :param project_files: Input path containing project scripts.
     :param fairness_results: Input path containing fairness_analysis.json.
@@ -211,69 +245,44 @@ def fairness_visualization(
     print(f"Fairness Bias visualization completed. Plots saved to {plots_path}")
 
 
-# -----------------------
-# Step 4: Explainer Analysis
-# -----------------------
-@dsl.component(
-    base_image="python:3.14-slim",
-    packages_to_install=[
-        "pandas==3.0.0",
-        "tqdm==4.67.2",
-        "numpy==2.4.2",
-    ],
-)
+@dsl.container_component
 def explainer_analysis(
         project_files: Input[Model],
         data: Input[Dataset],
         explainer_results: Output[Dataset],
         sensitivity: float,
-        docker_image: str,
-) -> None:
-    """
-    Run explainer analysis on the STAR model.
+):
+    """Run explainer analysis inside STAR Docker container.
 
     :param project_files: Input path containing project scripts.
     :param data: Input path containing patient JSON files.
     :param explainer_results: Output path for explainer results.
     :param sensitivity: Sensitivity parameter for the explainer script.
-    :param docker_image: Docker image name for STAR model.
     """
-    from pathlib import Path
-    import subprocess
+    command_str = f"""
+        set -e
+        apt-get update
+        apt-get install -y python3 python3-dev wget curl
+        curl -sS https://bootstrap.pypa.io/get-pip.py | python3 - --break-system-packages
+        python3 -m pip install --break-system-packages pandas==3.0.0 tqdm==4.67.2 numpy==2.4.2
+        cd {project_files.path}
 
-    # Prepare paths
-    proj_path = Path(project_files.path)
-    data_path = Path(data.path)
-    results_path = Path(explainer_results.path)
-    results_path.mkdir(parents=True, exist_ok=True)
+        python3 explainer.py \
+            --data_path {data.path} \
+            --output {explainer_results.path} \
+            --sensitivity {sensitivity} \
+            --docker_image {DOCKER_IMAGE} \
+            --in_docker True
+        ls -la {explainer_results.path}
+    """
 
-    # Prepare script and arguments
-    script = proj_path / "explainer.py"
-    if not script.exists():
-        raise FileNotFoundError(f"Explainer script not found at {script}")
-
-    print(f"Running explainer analysis with {script}")
-
-    cmd = [
-        "python",
-        str(script),
-        "--data_path",
-        str(data_path),
-        "--sensitivity",
-        str(sensitivity),
-        "--output",
-        str(results_path),
-        "--docker_image",
-        docker_image,
-    ]
-    subprocess.run(cmd, check=True)
-
-    print(f"Explainer analysis finished. Results saved to {results_path}")
+    return dsl.ContainerSpec(
+        image=DOCKER_IMAGE,
+        command=["sh", "-c"],
+        args=[command_str]
+    )
 
 
-# -----------------------
-# Step 5: Explainer Visualization
-# -----------------------
 @dsl.component(
     base_image="python:3.14-slim",
     packages_to_install=["tqdm==4.67.1", "pandas==2.3.3", "matplotlib==3.10.7"],
@@ -284,8 +293,7 @@ def explainer_visualization(
         explainer_plots: Output[Dataset],
         sensitivity: float,
 ) -> None:
-    """
-    Create visualizations for explainer analysis results.
+    """Create visualizations for explainer analysis results.
 
     :param project_files: Input path containing project scripts.
     :param explainer_results: Input path containing explainer results.
@@ -339,9 +347,7 @@ def explainer_visualization(
 
 
 # -----------------------
-# -----------------------
 # Define Pipeline
-# -----------------------
 # -----------------------
 @dsl.pipeline(
     name="STAR Model Fairness-Bias and Explainer Pipeline",
@@ -349,15 +355,12 @@ def explainer_visualization(
 )
 def star_pipeline(
         github_repo_url: str,
-        docker_image: str,
         branch: str = "main",
         sensitivity: float = 0.3,
 ):
-    """
-    Pipeline to run STAR model fairness/bias and explainer analyses.
+    """Pipeline to run STAR model fairness/bias and explainer analyses.
 
     :param github_repo_url: URL of the GitHub repository containing the STAR code and data.
-    :param docker_image: Docker image name for STAR model.
     :param branch: Branch name to pull from (defaults to 'main').
     :param sensitivity: Sensitivity parameter for the explainer analysis. Defaults to 0.3.
     """
@@ -369,20 +372,31 @@ def star_pipeline(
     repo_task.set_memory_request("2Gi")
     repo_task.set_memory_limit("4Gi")
 
-    # Step 2: Fairness analysis
+    # Step 2: Make and store predictions
+    predictions_task = star_predictions(
+        input_data=repo_task.outputs["data"]
+    )
+    predictions_task.after(repo_task)
+    predictions_task.set_caching_options(False)
+    predictions_task.set_cpu_request("4000m")
+    predictions_task.set_cpu_limit("6000m")
+    predictions_task.set_memory_request("8Gi")
+    predictions_task.set_memory_limit("12Gi")
+
+    # Step 3: Fairness analysis
     fairness_task = fairness_analysis(
         project_files=repo_task.outputs["project_files"],
         data=repo_task.outputs["data"],
-        docker_image=docker_image,
+        predictions=predictions_task.outputs["predictions"],
     )
-    fairness_task.after(repo_task)
+    fairness_task.after(predictions_task)
     fairness_task.set_caching_options(False)
     fairness_task.set_cpu_request("2000m")
     fairness_task.set_cpu_limit("4000m")
     fairness_task.set_memory_request("4Gi")
     fairness_task.set_memory_limit("8Gi")
 
-    # Step 3: Fairness visualization
+    # Step 4: Fairness visualization
     fairness_viz_task = fairness_visualization(
         project_files=repo_task.outputs["project_files"],
         fairness_results=fairness_task.outputs["fairness_results"],
@@ -394,21 +408,20 @@ def star_pipeline(
     fairness_viz_task.set_memory_request("2Gi")
     fairness_viz_task.set_memory_limit("4Gi")
 
-    # Step 4: Explainer analysis
+    # Step 5: Explainer analysis
     explainer_task = explainer_analysis(
         project_files=repo_task.outputs["project_files"],
         data=repo_task.outputs["data"],
         sensitivity=sensitivity,
-        docker_image=docker_image,
     )
     explainer_task.after(repo_task)
     explainer_task.set_caching_options(False)
-    explainer_task.set_cpu_request("2000m")
-    explainer_task.set_cpu_limit("4000m")
-    explainer_task.set_memory_request("4Gi")
-    explainer_task.set_memory_limit("8Gi")
+    explainer_task.set_cpu_request("4000m")
+    explainer_task.set_cpu_limit("6000m")
+    explainer_task.set_memory_request("8Gi")
+    explainer_task.set_memory_limit("12Gi")
 
-    # Step 5: Explainer visualization
+    # Step 6: Explainer visualization
     explainer_viz_task = explainer_visualization(
         project_files=repo_task.outputs["project_files"],
         explainer_results=explainer_task.outputs["explainer_results"],
