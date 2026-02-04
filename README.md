@@ -24,7 +24,7 @@ Additionally, it includes fairness/bias analysis to detect potential biases acro
 
 The STAR model takes patient clinical data (blood glucose history, insulin infusion/bolus, nutrition infusion/bolus, diabetic status) and predicts a blood glucose range (5th-95th percentile interval) up to 3 hours into the future. This project adds an explainability layer, allowing users to understand why the model makes certain predictions and assess potential biases.
 
-**IMPORTANT**: The model is a physiological-based blood glucose prediction system exposed via REST API. The explainability analysis uses model-agnostic techniques (Feature Perturbation for higher sensitivity (≥ 0.5), Feature Ablation for lower sensitivity (< 0.5)) to provide interpretable insights.
+**IMPORTANT**: The model is a physiological-based blood glucose prediction system packaged as a Docker image. The explainability analysis uses model-agnostic techniques (Feature Perturbation for higher sensitivity (≥ 0.5), Feature Ablation for lower sensitivity (< 0.5)) to provide interpretable insights.
 
 Key Components:
 1. Input Data: JSON files containing patient clinical data with blood glucose measurements, insulin administration, and nutrition information. More details in the [Data Structure section](#data-structure) below.

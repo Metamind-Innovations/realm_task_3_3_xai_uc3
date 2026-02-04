@@ -180,7 +180,7 @@ def fairness_bias_analysis(
 ) -> None:
     """
     Run fairness and bias analysis for STAR blood glucose predictions.
-    This function loads patient JSON files, generates predictions using the STAR API,
+    This function loads patient JSON files and existing STAR model predictions (from Docker container),
     and computes fairness metrics across demographic groups (age and gender).
 
     Fairness Metrics:
