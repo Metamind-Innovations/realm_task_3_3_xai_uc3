@@ -28,7 +28,7 @@ The STAR model takes patient clinical data (blood glucose history, insulin infus
 
 Key Components:
 1. Input Data: JSON files containing patient clinical data with blood glucose measurements, insulin administration, and nutrition information. More details in the [Data Structure section](#data-structure) below.
-2. Model: STAR API for blood glucose range prediction (BG5TH - BG95TH interval). The public API endpoint is `https://demo.insilicare.com/api/star/REALM/validation`.
+2. Model: STAR Docker image (`glucomeo`) for blood glucose range prediction (BG5TH - BG95TH interval).
 3. Fairness/Bias Analysis: Performed using the [fairness_bias_analysis.py](./src/fairness_bias_analysis.py) script. Evaluates equalized odds (miscoverage rates) and demographic parity (mean predicted values) across Age and Gender groups. This script can be executed independently and as part of the Kubeflow pipeline component.
 4. Explainability Analysis: Performed using the [explainer.py](./src/explainer.py) script with dynamic method selection based on sensitivity value. Again, this script can be executed independently and as part of the Kubeflow pipeline component.
 5. Visualizations: Generated using [fairness_bias_visualization.py](./src/fairness_bias_visualization.py) and [explainer_visualization.py](./src/explainer_visualization.py) scripts.
@@ -38,6 +38,7 @@ Key Components:
 
 ### Prerequisites
 - Python 3.14
+- Docker Desktop (to run the STAR model locally)
 - Required Python packages (installed via `pip install -r requirements.txt`, can be found in [requirements.txt](./requirements.txt))
 
 ### Data Structure
@@ -194,65 +195,55 @@ The input data is expected to be in JSON format representing a Patient object. E
 
 ### Running the STAR Model
 
-The STAR model is accessible via a public REST API. Use the following command to make predictions:
+The STAR model is packaged as a Docker image (`glucomeo`). The model processes all JSON files in an input directory and generates a single `results.csv` file in the output directory.
 
+**Docker Run Command:**
 ```bash
-curl -X POST "https://demo.insilicare.com/api/star/REALM/validation" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "patient": <PATIENT_JSON_OBJECT>,
-    "predictionTime": 1578641460000
-  }'
+docker run --rm \
+  -e AEONICS_JAVA_OPTIONS=-Xmx1g \
+  -e AEONICS_LICENSE_STORE_PATH=/opt/aeonics/aeonics.license \
+  -e AEONICS_LICENSE_STORE_PASS=secret \
+  -e AEONICS_ACCEPT_UNSIGNED_MODULES=true \
+  -e AEONICS_LOG_LEVEL=1000 \
+  -e REALM_INPUT_DIR=/home/in \
+  -e REALM_OUTPUT_DIR=/home/out \
+  -w /opt/aeonics \
+  -u 0 \
+  -v /path/to/input/directory:/home/in \
+  -v /path/to/output/directory:/home/out \
+  glucomeo
+```
+Replace `/path/to/input/directory` with the directory containing your patient JSON files and `/path/to/output/directory` with where you want `results.csv` to be saved.
+
+**Output:**
+The model generates a `results.csv` file with the following structure:
+```csv
+BG5TH,BG95TH
+7.196445581533928,17.42121412769019
+...
 ```
 
-**Input Parameters:**
-
-| Key | Value | Comment |
-|-----|-------|---------|
-| patient | JSON object | Mandatory. Full patient data with insulin, glucose, and nutrition information. |
-| predictionTime | long | Optional. Unix epoch time in milliseconds. Must be between [updateTime, updateTime+`180*60*1000`]. |
-
-**Example Response:**
-```json
-{
-    "BG95TH": 17.42121412769019,
-    "BG5TH": 7.196445581533928
-}
-```
-
-**Alternative Response (if no predictionTime is given):**
-```json
-{
-    "BG95TH": 17.42121412769019,
-    "BG5TH": 7.196445581533928,
-    "TRUTH": 7.888888888888889,
-    "INSIDE": true
-}
-```
-
-If predictionTime is not given, automatically uses last BG present as true value to compare against.
-
-The response includes:
+Where:
 - BG5TH: Lower bound (5th percentile) of predicted blood glucose range
 - BG95TH: Upper bound (95th percentile) of predicted blood glucose range
-- TRUTH: (Optional) The actual blood glucose value for comparison
-- INSIDE: (Optional) Boolean indicating if the true value falls within the predicted range
 
 ### Analyses Execution
 
 In order for the analyses to be executed:
-- The patient JSON files should be downloaded and stored in a data directory.
-- For input JSON patient data, the explainability and fairness analyses can be executed as described in the next sections.
+- The patient JSON files should be stored in a data directory.
+- The STAR model predictions should be generated first using the Docker command above.
+- For input JSON patient data and corresponding predictions CSV, the explainability and fairness analyses can be executed as described in the next sections.
 
 #### Fairness/Bias Analysis
 
 The fairness and bias analysis can be executed independently using the following command:
 ```bash
-python src/fairness_bias_analysis.py --data_path 'path/to/patient_json_files/' --output 'output/fairness_analysis.json'
+python src/fairness_bias_analysis.py --data_path 'path/to/patient_json_files/' --predictions_path 'path/to/results.csv' --output 'output/fairness_analysis.json'
 ```
 
 Arguments:
 - `--data_path`: Path to the directory containing patient JSON files.
+- `--predictions_path`: Path to the predictions CSV file generated by the STAR model.
 - `--output`: Path to save the output JSON file containing the fairness and bias metrics.
 
 Visualization of the results can be done using the following command:
@@ -269,7 +260,7 @@ Arguments:
 The explainability analysis can be executed independently using the following command:
 
 ```bash
-python src/explainer.py --data_path 'path/to/patient_json_files/' --sensitivity 0.3 --output output
+python src/explainer.py --data_path 'path/to/patient_json_files/' --sensitivity 0.3 --output output --docker_image glucomeo --in_docker False
 ```
 
 Arguments:
@@ -278,6 +269,8 @@ Arguments:
   - sensitivity < 0.5: Feature Ablation analysis
   - sensitivity ≥ 0.5: Feature Perturbation analysis
 - `--output`: Directory to save the output files (explanations). Default is `output`.
+- `--docker_image`: Name of the Docker image containing the STAR model. Default is `glucomeo`.
+- `--in_docker`: Boolean flag indicating whether the script is being run inside the Docker container. Default is `False`.
 
 Visualization of the results can be done using the following command:
 ```bash
@@ -292,7 +285,6 @@ Arguments:
   - sensitivity ≥ 0.5: Feature Perturbation analysis
 
 Alternatively, the analyses and visualizations can be executed as part of the Kubeflow pipeline component, as described in the [Kubeflow Pipeline Component](#kubeflow-pipeline-component) section below.
-
 
 ## JSON Output
 
@@ -404,6 +396,7 @@ For Feature Ablation (sensitivity < 0.5):
 - Higher positive importance scores indicate features that are more critical for accurate predictions.
 - Negative importance scores indicate features that are harmful for the model predictions.
 - Features with 0.0 importance had no measurable impact when removed.
+- Values are normalized to range [-1, 1].
 
 For Feature Perturbation (sensitivity ≥ 0.5):
 - Shows the impact when feature values are modified.
@@ -414,7 +407,7 @@ For Feature Perturbation (sensitivity ≥ 0.5):
 
 **Key Features Analyzed:**
 - `bloodGlucose.value`: Historical blood glucose measurements
-- `insulinInfusion: Insulin infusion parameters
+- `insulinInfusion`: Insulin infusion parameters
 - `nutritionInfusion`: Nutrition infusion parameters
 - `diabeticStatus`: Patient's diabetes type (None, Type 1, Type 2)
 - `insulinBolus`: Insulin bolus parameters
@@ -425,23 +418,38 @@ For Feature Perturbation (sensitivity ≥ 0.5):
 
 The [star_pipeline_component.py](./kubeflow_component/star_pipeline_component.py) file defines a Kubeflow pipeline for automating the STAR XAI analysis workflow. This pipeline orchestrates the following components:
 
-- Download Component: Downloads project files and data from a specified GitHub repository and branch. The pipeline expects the repo to contain:
-  - Project files in `src/` folder: `STAR_model.py`, `explainer.py`, `fairness_bias_analysis.py`, `fairness_bias_visualization.py`, `explainer_visualization.py`, `utils/data_helpers.py`, `utils/generic_utils.py`, `utils/explainer_helpers.py`.
+- **Download Component**: Downloads project files and data from a specified GitHub repository and branch. The pipeline expects the repo to contain:
+  - Project files in `src/` folder: `STAR_model.py`, `explainer.py`, `fairness_bias_analysis.py`, `fairness_bias_visualization.py`, `explainer_visualization.py`, and utility files in `utils/` subdirectory.
   - Data in `data/` folder: Patient JSON files.
-- Fairness/Bias Analysis: Executes the fairness and bias analysis using the provided script, generating the output mentioned in the [Fairness and Bias Analysis Output](#fairness-and-bias-analysis-output) section.
-- Fairness/Bias Visualization: Creates visual representations of fairness/bias metrics across demographic groups (Age, Gender), generating consolidated bar charts showing equalized odds (miscoverage rates) and demographic parity (mean predicted values). Outputs PNG files described in [Fairness and Bias Analysis Visualizations](#fairness-and-bias-analysis-visualizations).
-- Explainability Analysis: Executes the explainability analysis using the provided script, generating the output mentioned in the [Explainability Analysis Output](#explainability-analysis-output) section.
-- Explainability Visualization: Generates visualizations based on the selected method (determined by sensitivity parameter). Outputs PNG files described in [Explainability Analysis Visualizations](#explainability-analysis-visualizations) section.
+- **STAR Predictions Component**: Runs the STAR Docker model to generate predictions for all patient JSON files. This component:
+  - Takes patient JSON files as input
+  - Executes the STAR model inside the Docker container
+  - Outputs a `results.csv` file with BG5TH and BG95TH predictions
+- **Fairness/Bias Analysis**: Executes the fairness and bias analysis using the provided script, generating the output mentioned in the [Fairness and Bias Analysis Output](#fairness-and-bias-analysis-output) section. This component requires both the patient JSON files and the predictions CSV
+- **Fairness/Bias Visualization**: Creates visual representations of fairness/bias metrics across demographic groups (Age, Gender), generating consolidated bar charts showing equalized odds (miscoverage rates) and demographic parity (mean predicted values). Outputs PNG files described in [Fairness and Bias Analysis Visualizations](#fairness-and-bias-analysis-visualizations).
+- **Explainability Analysis**: Executes the explainability analysis using the provided script, generating the output mentioned in the [Explainability Analysis Output](#explainability-analysis-output) section. This component runs inside the STAR Docker container to allow multiple model executions for perturbation and ablation experiments.
+- **Explainability Visualization**: Generates visualizations based on the selected method (determined by sensitivity parameter). Outputs PNG files described in [Explainability Analysis Visualizations](#explainability-analysis-visualizations) section.
 
 ### Pipeline Architecture
 The pipeline follows this execution pattern:
-- Sequential Phase: Repository download runs first.
-- Parallel Phase: Fairness and explainability analyses run simultaneously after repository download completes.
-- Visualization Phase: Each analysis step is followed by its corresponding visualization step:
-  - Fairness analysis followed by Fairness visualization
-  - Explainability analysis followed by Explainability visualization
+1. **Repository Download**: Downloads project files and data
+2. **STAR Predictions**: Generates predictions using the Docker model
+3. **Parallel Analysis Phase**: After predictions are generated:
+   - Fairness analysis runs (uses predictions CSV)
+   - Explainability analysis runs (generates its own predictions for perturbations/ablations)
+4. **Visualization Phase**: Each analysis step is followed by its corresponding visualization step
 
 ![Kubeflow Pipeline](./media/kubeflow_pipeline.png)
+
+### Important Configuration
+
+Before running the pipeline, you **must** configure the Docker image in the `star_pipeline_component.py` file:
+```python
+# Insert your dockerhub image below (e.g. "docker.io/<username>/<image_name>:<tag>")
+DOCKER_IMAGE = "<docker_image>"
+```
+Replace `<docker_image>` with your actual Docker image name, for example: `docker.io/myusername/glucomeo:latest`
+Note that the Docker image should be available in a Docker registry (e.g., Docker Hub) that is accessible from your Kubeflow environment.
 
 ### Running the Pipeline
 The pipeline can be compiled and deployed to a Kubeflow environment by executing:
