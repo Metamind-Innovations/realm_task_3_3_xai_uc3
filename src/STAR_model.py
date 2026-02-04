@@ -3,6 +3,7 @@ import pandas as pd
 from pathlib import Path
 from typing import List
 import shutil
+import os
 
 
 class STARDockerWrapper:
@@ -29,11 +30,7 @@ class STARDockerWrapper:
         if not in_docker_run:
             docker_cmd = shutil.which("docker")
             if docker_cmd is None:
-                raise RuntimeError(
-                    "Docker executable not found in PATH. "
-                    "Please ensure Docker Desktop is installed and running, "
-                    "or add Docker to your system PATH."
-                )
+                docker_cmd = "docker"
             self.docker_executable = docker_cmd
 
             try:
@@ -87,31 +84,46 @@ class STARDockerWrapper:
             dst = self.in_mount / src.name
             shutil.copy2(src, dst)
 
-        in_volume = self._format_volume_mount(self.in_mount, "/home/in")
-        out_volume = self._format_volume_mount(self.out_mount, "/home/out")
+        if not self.in_docker_run:
+            in_volume = self._format_volume_mount(self.in_mount, "/home/in")
+            out_volume = self._format_volume_mount(self.out_mount, "/home/out")
 
-        cmd = [
-            self.docker_executable,
-            "run",
-            "--rm",
-            "-e", "AEONICS_JAVA_OPTIONS=-Xmx1g",
-            "-e", "AEONICS_LICENSE_STORE_PATH=/opt/aeonics/aeonics.license",
-            "-e", "AEONICS_LICENSE_STORE_PASS=secret",
-            "-e", "AEONICS_ACCEPT_UNSIGNED_MODULES=true",
-            "-e", "AEONICS_LOG_LEVEL=1000",
-            "-e", "REALM_INPUT_DIR=/home/in",
-            "-e", "REALM_OUTPUT_DIR=/home/out",
-            "-w", "/opt/aeonics",
-            "-u", "0",
-            "-v", in_volume,
-            "-v", out_volume,
-            self.docker_image,
-        ]
+            cmd = [
+                self.docker_executable,
+                "run",
+                "--rm",
+                "-e", "AEONICS_JAVA_OPTIONS=-Xmx1g",
+                "-e", "AEONICS_LICENSE_STORE_PATH=/opt/aeonics/aeonics.license",
+                "-e", "AEONICS_LICENSE_STORE_PASS=secret",
+                "-e", "AEONICS_ACCEPT_UNSIGNED_MODULES=true",
+                "-e", "AEONICS_LOG_LEVEL=1000",
+                "-e", f"REALM_INPUT_DIR=/home/in",
+                "-e", f"REALM_OUTPUT_DIR=/home/out",
+                "-w", "/opt/aeonics",
+                "-u", "0",
+                "-v", in_volume,
+                "-v", out_volume,
+                self.docker_image,
+            ]
+        else:
+            os.environ["REALM_INPUT_DIR"] = str(self.in_mount)
+            os.environ["REALM_OUTPUT_DIR"] = str(self.out_mount)
+            os.environ["AEONICS_JAVA_OPTIONS"] = "-Xmx1g"
+            os.environ["AEONICS_LICENSE_STORE_PATH"] = "/opt/aeonics/aeonics.license"
+            os.environ["AEONICS_LICENSE_STORE_PASS"] = "secret"
+            os.environ["AEONICS_ACCEPT_UNSIGNED_MODULES"] = "true"
+            os.environ["AEONICS_LOG_LEVEL"] = "1000"
+
+            cmd = "cd /opt/aeonics && /opt/aeonics/jre/bin/java -Xmx1g -jar aeonics.jar"
 
         try:
-            subprocess.run(cmd, check=True, capture_output=True, text=True)
+            if self.in_docker_run:
+                subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+            else:
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
         except subprocess.CalledProcessError as e:
-            error_msg = f"Docker execution failed.\nCommand: {' '.join(cmd)}"
+            cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
+            error_msg = f"Model execution failed.\nCommand: {cmd_str}"
             if e.stderr:
                 error_msg += f"\nStderr: {e.stderr}"
             if e.stdout:
@@ -149,7 +161,7 @@ class STARDockerWrapper:
                 # Remove the directory itself
                 temp_mount_parent.rmdir()
         except Exception:
-            pass  # Silent cleanup
+            pass
 
         return results_df
 

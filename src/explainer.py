@@ -212,21 +212,13 @@ def perturb_categorical(
     return p
 
 
-# ============================================================================
-# MAE COMPUTATION
-# ============================================================================
-def compute_mae(
-        patients_data: List[Dict[str, Any]],
-        star_docker: STARDockerWrapper,
-        temp_dir: Path,
-) -> float:
+def save_patients_batch(patients_data: List[Dict[str, Any]], temp_dir: Path) -> List[str]:
     """
-    Compute Mean Absolute Error across all patients using batch prediction.
+    Save patient data to JSON files.
 
     :param patients_data: List of patient data dictionaries.
-    :param star_docker: STAR Docker wrapper instance.
-    :param temp_dir: Temporary directory for storing patient files.
-    :return: Mean absolute error across all successfully processed patients.
+    :param temp_dir: Directory to save files.
+    :return: List of file paths.
     """
 
     temp_dir.mkdir(parents=True, exist_ok=True)
@@ -238,8 +230,23 @@ def compute_mae(
             json.dump(patient_data, f)
         patient_files.append(str(temp_file))
 
-    predictions_df = star_docker.predict_batch(patient_files)
+    return patient_files
 
+
+# ============================================================================
+# MAE COMPUTATION
+# ============================================================================
+def compute_mae_from_predictions(
+        patients_data: List[Dict[str, Any]],
+        predictions_df,
+) -> float:
+    """
+    Compute Mean Absolute Error from predictions DataFrame.
+
+    :param patients_data: List of patient data dictionaries.
+    :param predictions_df: DataFrame with BG5TH and BG95TH columns.
+    :return: Mean absolute error across all successfully processed patients.
+    """
     aes = []
     for idx, patient_data in enumerate(patients_data):
         try:
@@ -252,12 +259,6 @@ def compute_mae(
             aes.append(ae)
         except Exception:
             continue
-
-    for pf in patient_files:
-        try:
-            Path(pf).unlink(missing_ok=True)
-        except Exception:
-            pass
 
     if not aes:
         return 0.0
@@ -272,7 +273,7 @@ def compute_mae(
 # ============================================================================
 def analyze_feature_importance(
         patients_data: List[Dict[str, Any]],
-        star_docker: STARDockerWrapper,
+        star_wrapper,
         analysis_type: Literal["feature_ablation", "feature_perturbation"],
         temp_dir: Path,
 ) -> Dict[str, float]:
@@ -280,13 +281,19 @@ def analyze_feature_importance(
     Analyze feature importance using ablation or perturbation.
 
     :param patients_data: List of patient data dictionaries.
-    :param star_docker: STAR Docker wrapper instance.
+    :param star_wrapper: STAR Docker wrapper instance.
     :param analysis_type: Type of analysis.
     :param temp_dir: Temporary directory for storing patient files.
     :return: Dictionary mapping attribute names to normalized importance scores (0-1).
     """
 
-    baseline_mae = compute_mae(patients_data, star_docker=star_docker, temp_dir=temp_dir / "baseline")
+    baseline_temp_dir = temp_dir / "baseline"
+    baseline_files = save_patients_batch(patients_data, baseline_temp_dir)
+    baseline_predictions = star_wrapper.predict_batch(baseline_files)
+    baseline_mae = compute_mae_from_predictions(patients_data, baseline_predictions)
+
+    if baseline_temp_dir.exists():
+        shutil.rmtree(baseline_temp_dir, ignore_errors=True)
 
     if analysis_type == "feature_ablation":
         transform_functions = build_ablation_registry()
@@ -330,16 +337,20 @@ def analyze_feature_importance(
             except Exception:
                 continue
 
-        # Compute MAE after transformation
-        transformed_mae = compute_mae(
-            patients_data=transformed_data,
-            star_docker=star_docker,
-            temp_dir=temp_dir / f"transformed_{attr_name.replace('.', '_')}"
+        attr_temp_dir = temp_dir / f"attr_{attr_name.replace('.', '_')}"
+        transformed_files = save_patients_batch(transformed_data, attr_temp_dir)
+
+        transformed_predictions = star_wrapper.predict_batch(transformed_files)
+        transformed_mae = compute_mae_from_predictions(
+            transformed_data, transformed_predictions
         )
 
         # Feature importance
         # Positive = INCREASE in MAE (higher MAE = worse predictions, feature is good for the model)
         # Negative = DECREASE in MAE (lower MAE = better predictions, feature is not good for the model)
+        if attr_temp_dir.exists():
+            shutil.rmtree(attr_temp_dir, ignore_errors=True)
+
         mae_diff = transformed_mae - baseline_mae
         feature_importance[attr_name] = mae_diff
 
@@ -367,8 +378,8 @@ def feature_importance_analysis(
         data_path: str,
         output_path: str,
         sensitivity: float,
-        docker_image: str = "glucomeo",
-        in_docker_run: bool = False,
+        docker_image: str,
+        in_docker_run: bool,
 ) -> None:
     """
     Run feature importance analysis on patient data.
@@ -376,8 +387,8 @@ def feature_importance_analysis(
     :param data_path: Path to directory containing patient JSON files.
     :param output_path: Output directory path for results.
     :param sensitivity: Sensitivity level [0, 1]. <0.5: ablation, >=0.5: perturbation.
-    :param docker_image: Docker image name for STAR model.
-    :param in_docker_run: Whether running inside Docker container.
+    :param docker_image: Name of the Docker image containing the STAR model.
+    :param in_docker_run: Indicates if the script is being run inside the container.
     :raises ValueError: If sensitivity not in [0, 1] or no files found.
     """
 
@@ -400,13 +411,18 @@ def feature_importance_analysis(
     if not patients_data:
         raise ValueError("No patients successfully loaded")
 
-    star_docker = STARDockerWrapper(docker_image=docker_image, in_docker_run=in_docker_run)
+    star_wrapper = STARDockerWrapper(
+        docker_image=docker_image, in_docker_run=in_docker_run
+    )
 
     temp_dir = Path(output_path) / "temp_explainer"
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     results = analyze_feature_importance(
-        patients_data, star_docker=star_docker, analysis_type=method, temp_dir=temp_dir
+        patients_data,
+        star_wrapper=star_wrapper,
+        analysis_type=method,
+        temp_dir=temp_dir
     )
 
     if temp_dir.exists():
@@ -418,6 +434,19 @@ def feature_importance_analysis(
 
     save_json(data=results, filepath=str(output_path))
     print(f"Feature importance analysis completed. Results saved to {output_path}")
+
+
+def str2bool(v: Literal["True", "False"]) -> bool:
+    """
+    Convert a string 'True' or 'False' to a Python boolean.
+    Raises argparse.ArgumentTypeError if the input is invalid.
+    """
+    if v == "True":
+        return True
+    elif v == "False":
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected: 'True' or 'False'")
 
 
 def main() -> None:
@@ -445,24 +474,28 @@ def main() -> None:
     )
     parser.add_argument(
         "--docker_image",
+        type=str,
         default="glucomeo",
-        help="Docker image name for STAR model (default: glucomeo)",
+        help="The docker image to run for the model",
     )
     parser.add_argument(
-        "--in_docker_run",
-        action="store_true",
+        "--in_docker",
+        type=str2bool,
         default=False,
-        help="Whether running inside Docker container (default: False)",
+        help="Indicates if the script will be executed inside the container of the provided docker image",
     )
 
     args = parser.parse_args()
+
+    if not 0 <= args.sensitivity <= 1:
+        raise ValueError("Sensitivity must be between 0 and 1")
 
     feature_importance_analysis(
         data_path=args.data_path,
         output_path=args.output,
         sensitivity=args.sensitivity,
         docker_image=args.docker_image,
-        in_docker_run=args.in_docker_run,
+        in_docker_run=args.in_docker,
     )
 
 

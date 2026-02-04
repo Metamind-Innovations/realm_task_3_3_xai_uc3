@@ -5,7 +5,6 @@ from pathlib import Path
 
 from utils.generic_utils import load_json_file, get_json_files, save_json
 from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
-from STAR_model import STARDockerWrapper
 
 DEMOGRAPHICS_COLUMNS = {"age": "age", "gender": "gender"}
 
@@ -106,27 +105,28 @@ def calculate_fairness_metrics(
     return metrics
 
 
-def predict_glucose_levels(
+def load_predictions_and_data(
         data_path: str,
-        docker_image: str = "glucomeo",
-        in_docker_run: bool = False,
+        predictions_path: str,
 ) -> pd.DataFrame:
     """
-    Process patient JSON files in batch and return results with demographics.
+    Load patient data and predictions, merge them with demographics.
 
     :param data_path: Path to directory containing patient JSON files
-    :param docker_image: Docker image name for STAR model
-    :param in_docker_run: Whether running inside Docker container
-    :return: Results with demographics, predictions, and ground truth
+    :param predictions_path: Path to predictions CSV file
+    :return: DataFrame with demographics, predictions, and ground truth
     """
     patient_files = get_json_files(data_path)
 
     if not patient_files:
         raise ValueError(f"No JSON files found in directory: {data_path}")
 
-    model_wrapper = STARDockerWrapper(docker_image=docker_image, in_docker_run=in_docker_run)
+    predictions_df = pd.read_csv(predictions_path)
 
-    predictions_df = model_wrapper.predict_batch(patient_files)
+    if "BG5TH" not in predictions_df.columns or "BG95TH" not in predictions_df.columns:
+        raise ValueError(
+            f"Predictions CSV missing required columns. Got: {predictions_df.columns.tolist()}"
+        )
 
     results = []
     for idx, filepath in enumerate(patient_files):
@@ -175,22 +175,25 @@ def predict_glucose_levels(
 
 def fairness_bias_analysis(
         data_path: str,
+        predictions_path: str,
         output_path: str,
-        docker_image: str = "glucomeo",
-        in_docker_run: bool = False,
 ) -> None:
     """
     Run fairness and bias analysis for STAR blood glucose predictions.
+    This function loads patient JSON files, generates predictions using the STAR API,
+    and computes fairness metrics across demographic groups (age and gender).
+
+    Fairness Metrics:
+    1. Demographic Parity: Checks if mean predicted values are similar across groups
+    2. Equalized Odds: Checks if miscoverage rates are similar across groups
 
     :param data_path: Path to directory with patient JSON files
+    :param predictions_path: Path to predictions CSV file
     :param output_path: Path where results JSON will be saved
-    :param docker_image: Docker image name for STAR model
-    :param in_docker_run: Whether running inside Docker container
     """
-    preds_dem = predict_glucose_levels(
+    preds_dem = load_predictions_and_data(
         data_path=data_path,
-        docker_image=docker_image,
-        in_docker_run=in_docker_run
+        predictions_path=predictions_path,
     )
 
     # Filter only successful predictions
@@ -198,8 +201,8 @@ def fairness_bias_analysis(
 
     if preds_dem_success.empty:
         raise ValueError(
-            "No successful predictions generated. "
-            "Check patient data format and API connectivity."
+            "No successful predictions found. "
+            "Check patient data format and predictions file."
         )
 
     # Convert age to categorical
@@ -242,29 +245,22 @@ def main() -> None:
         help="Path to directory containing patient JSON files",
     )
     parser.add_argument(
+        "--predictions_path",
+        required=True,
+        help="Path to predictions CSV file from STAR model",
+    )
+    parser.add_argument(
         "--output",
         default="output/fairness_analysis.json",
         help="Output JSON file path (default: output/fairness_analysis.json)",
-    )
-    parser.add_argument(
-        "--docker_image",
-        default="glucomeo",
-        help="Docker image name for STAR model (default: glucomeo)",
-    )
-    parser.add_argument(
-        "--in_docker_run",
-        action="store_true",
-        default=False,
-        help="Whether running inside Docker container (default: False)",
     )
 
     args = parser.parse_args()
 
     fairness_bias_analysis(
         data_path=args.data_path,
+        predictions_path=args.predictions_path,
         output_path=args.output,
-        docker_image=args.docker_image,
-        in_docker_run=args.in_docker_run,
     )
 
 
