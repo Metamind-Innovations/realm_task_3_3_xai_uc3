@@ -168,11 +168,7 @@ def fairness_analysis(
 
     predictions_csv = predictions_path / "results.csv"
     if not predictions_csv.exists():
-        pred_files = list(predictions_path.glob("*.csv"))
-        if pred_files:
-            predictions_csv = pred_files[0]
-        else:
-            raise FileNotFoundError(f"No predictions CSV found in {predictions_path}")
+        raise FileNotFoundError(f"Predictions file not found: {predictions_csv}")
 
     print(f"Running fairness analysis with {script}")
     print(f"Data path: {data_path}")
