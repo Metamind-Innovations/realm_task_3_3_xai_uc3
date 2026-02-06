@@ -2,25 +2,19 @@ import argparse
 import pandas as pd
 from typing import Dict, Any, Literal
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from tqdm import tqdm
 
 from utils.generic_utils import load_json_file, get_json_files, save_json
-from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
-from STAR_model import STARWrapper
+from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint, get_prediction_by_hospital_id
 
 DEMOGRAPHICS_COLUMNS = {"age": "age", "gender": "gender"}
 
 
 def age_to_cat(age_col: pd.Series) -> pd.Series:
-    """Convert numeric age to categorical age groups.
-    Age bins: <40, 40-54, 55-69, 70+
+    """
+    Convert numeric age to categorical age groups.
 
-    Args:
-        age_col (pd.Series): Numeric age values
-
-    Returns:
-        pd.Series: Categorical age groups
+    :param age_col: Numeric age values
+    :return: Categorical age groups
     """
     age_bins = [0, 40, 55, 70, 120]
     age_labels = ["<40", "40-54", "55-69", "70+"]
@@ -31,31 +25,27 @@ def age_to_cat(age_col: pd.Series) -> pd.Series:
 
 
 def compute_mean_predicted_value(predicted: pd.Series) -> float:
-    """Compute mean of predicted values (demographic parity metric).
+    """
+    Compute mean of predicted values (demographic parity metric).
 
-    Args:
-        predicted (pd.Series): Predicted blood glucose values (interval midpoints)
-
-    Returns:
-        float: Mean predicted value
+    :param predicted: Predicted blood glucose values (interval midpoints)
+    :return: Mean predicted value
     """
     return float(predicted.mean())
 
 
 def compute_miscoverage_rate(
-    actual: pd.Series,
-    lower: pd.Series,
-    upper: pd.Series,
+        actual: pd.Series,
+        lower: pd.Series,
+        upper: pd.Series,
 ) -> float:
-    """Compute miscoverage rate (equalized odds metric).
+    """
+    Compute miscoverage rate (equalized odds metric).
 
-    Args:
-        actual (pd.Series): Ground truth blood glucose values
-        lower (pd.Series): Lower bounds (BG5TH)
-        upper (pd.Series): Upper bounds (BG95TH)
-
-    Returns:
-        float: Miscoverage rate (proportion of times actual is outside interval)
+    :param actual: Ground truth blood glucose values
+    :param lower: Lower bounds (BG5TH)
+    :param upper: Upper bounds (BG95TH)
+    :return: Miscoverage rate (proportion of times actual is outside interval)
     """
 
     outside_interval = (actual < lower) | (actual > upper)
@@ -65,18 +55,14 @@ def compute_miscoverage_rate(
 
 
 def calculate_fairness_metrics(
-    data: pd.DataFrame, metric_type: Literal["demographic_parity", "equalized_odds"]
+        data: pd.DataFrame, metric_type: Literal["demographic_parity", "equalized_odds"]
 ) -> Dict[str, Any]:
-    """Calculate fairness metrics across demographic groups.
+    """
+    Calculate fairness metrics across demographic groups.
 
-    Args:
-        data (pd.DataFrame): DataFrame with demographics, predictions, and ground truth
-        metric_type (Literal): Type of fairness metric to calculate:
-            - "demographic_parity": mean predicted values by group
-            - "equalized_odds": miscoverage rates by group
-
-    Returns:
-        Dict: Nested dictionary with metrics per demographic group
+    :param data: DataFrame with demographics, predictions, and ground truth
+    :param metric_type: Type of fairness metric to calculate
+    :return: Nested dictionary with metrics per demographic group
     """
 
     # Define metric configuration
@@ -119,84 +105,70 @@ def calculate_fairness_metrics(
     return metrics
 
 
-def process_single_patient(filepath: str, model: STARWrapper) -> dict:
-    """Process one patient JSON file and get predictions with demographics.
-
-    Args:
-        filepath (str): Path to patient JSON file
-        model (STARWrapper): STAR API wrapper instance
-
-    Returns:
-        dict: Result dictionary with predictions, demographics, and ground truth
+def load_predictions_and_data(
+        data_path: str,
+        predictions_path: str,
+) -> pd.DataFrame:
     """
-    try:
-        patient_data = load_json_file(filepath)
-        pred_time, actual_value = extract_prediction_info(patient_data)
+    Load patient data and predictions, merge them with demographics.
 
-        pred_interval = model.predict(
-            patient_data=patient_data, prediction_time=pred_time
-        )
-
-        interval_center = calculate_interval_midpoint(pred_interval)
-
-        # Extract demographics from patient data
-        episode = patient_data["episodes"][0]
-        age = episode.get("age", None)
-        gender = episode.get("gender", None)  # False=Male, True=Female in json data
-
-        return {
-            "file_name": Path(filepath).name,
-            "age": age,
-            "gender": "Female" if gender else "Male",
-            "ground_truth": actual_value,
-            "BG5TH": pred_interval["BG5TH"],
-            "BG95TH": pred_interval["BG95TH"],
-            "interval_center": interval_center,
-            "success": True,
-            "error_message": None,
-        }
-    except Exception as e:
-        return {
-            "file_name": Path(filepath).name,
-            "age": None,
-            "gender": None,
-            "ground_truth": None,
-            "BG5TH": None,
-            "BG95TH": None,
-            "interval_center": None,
-            "success": False,
-            "error_message": str(e),
-        }
-
-
-def predict_glucose_levels(data_path: str, max_workers: int = 10) -> pd.DataFrame:
-    """Process patient JSON files in parallel and return results with demographics.
-
-    Args:
-        data_path (str): Path to directory containing patient JSON files
-        max_workers (int): Number of parallel workers for API calls
-
-    Returns:
-        pd.DataFrame: Results with demographics, predictions, and ground truth
+    :param data_path: Path to directory containing patient JSON files
+    :param predictions_path: Path to predictions CSV file
+    :return: DataFrame with demographics, predictions, and ground truth
     """
     patient_files = get_json_files(data_path)
 
     if not patient_files:
         raise ValueError(f"No JSON files found in directory: {data_path}")
 
-    model_wrapper = STARWrapper()
+    predictions_df = pd.read_csv(predictions_path)
+
+    if "BG5TH" not in predictions_df.columns or "BG95TH" not in predictions_df.columns:
+        raise ValueError(
+            f"Predictions CSV missing required columns. Got: {predictions_df.columns.tolist()}"
+        )
 
     results = []
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(process_single_patient, file, model_wrapper)
-            for file in patient_files
-        ]
+    for filepath in patient_files:
+        try:
+            patient_data = load_json_file(filepath)
+            pred_time, actual_value = extract_prediction_info(patient_data)
 
-        for future in tqdm(
-            as_completed(futures), total=len(patient_files), desc="Processing patients"
-        ):
-            results.append(future.result())
+            # Extract demographics from patient data
+            episode = patient_data["episodes"][0]
+            age = episode.get("age", None)
+            gender = episode.get("gender", None) # False=Male, True=Female
+
+            # Get predictions for this patient by hospitalID
+            bg5th, bg95th = get_prediction_by_hospital_id(patient_data, predictions_df)
+            interval_center = calculate_interval_midpoint({
+                "BG5TH": bg5th,
+                "BG95TH": bg95th
+            })
+
+            results.append({
+                "file_name": Path(filepath).name,
+                "age": age,
+                "gender": "Female" if gender else "Male",
+                "ground_truth": actual_value,
+                "BG5TH": bg5th,
+                "BG95TH": bg95th,
+                "interval_center": interval_center,
+                "success": True,
+                "error_message": None,
+            })
+        except Exception as e:
+            results.append({
+                "file_name": Path(filepath).name,
+                "age": None,
+                "gender": None,
+                "ground_truth": None,
+                "BG5TH": None,
+                "BG95TH": None,
+                "interval_center": None,
+                "success": False,
+                "error_message": str(e),
+            })
 
     df = pd.DataFrame(results)
 
@@ -204,32 +176,35 @@ def predict_glucose_levels(data_path: str, max_workers: int = 10) -> pd.DataFram
 
 
 def fairness_bias_analysis(
-    data_path: str,
-    output_path: str,
+        data_path: str,
+        predictions_path: str,
+        output_path: str,
 ) -> None:
-    """Run fairness and bias analysis for STAR blood glucose predictions.
-    This function loads patient JSON files, generates predictions using the STAR API,
+    """
+    Run fairness and bias analysis for STAR blood glucose predictions.
+    This function loads patient JSON files and existing STAR model predictions (from Docker container),
     and computes fairness metrics across demographic groups (age and gender).
 
     Fairness Metrics:
     1. Demographic Parity: Checks if mean predicted values are similar across groups
     2. Equalized Odds: Checks if miscoverage rates are similar across groups
 
-    Args:
-        data_path: Path to directory with patient JSON files
-        output_path: Path where results JSON will be saved
+    :param data_path: Path to directory with patient JSON files
+    :param predictions_path: Path to predictions CSV file
+    :param output_path: Path where results JSON will be saved
     """
-
-    # Process all patients and get predictions with demographics
-    preds_dem = predict_glucose_levels(data_path=data_path)
+    preds_dem = load_predictions_and_data(
+        data_path=data_path,
+        predictions_path=predictions_path,
+    )
 
     # Filter only successful predictions
-    preds_dem_success = preds_dem[preds_dem["success"] == True].copy()
+    preds_dem_success = preds_dem[preds_dem["success"]].copy()
 
     if preds_dem_success.empty:
         raise ValueError(
-            "No successful predictions generated. "
-            "Check patient data format and API connectivity."
+            "No successful predictions found. "
+            "Check patient data format and predictions file."
         )
 
     # Convert age to categorical
@@ -260,10 +235,8 @@ def fairness_bias_analysis(
 
 
 def main() -> None:
-    """CLI entry point for fairness and bias analysis of STAR model predictions.
-
-    This function parses command-line arguments for patient data directory
-    and output path, then runs the fairness analysis pipeline.
+    """
+    CLI entry point for fairness and bias analysis of STAR model predictions.
     """
     parser = argparse.ArgumentParser(
         description="Analyze fairness and bias in STAR blood glucose predictions"
@@ -272,6 +245,11 @@ def main() -> None:
         "--data_path",
         required=True,
         help="Path to directory containing patient JSON files",
+    )
+    parser.add_argument(
+        "--predictions_path",
+        required=True,
+        help="Path to predictions CSV file from STAR model",
     )
     parser.add_argument(
         "--output",
@@ -283,6 +261,7 @@ def main() -> None:
 
     fairness_bias_analysis(
         data_path=args.data_path,
+        predictions_path=args.predictions_path,
         output_path=args.output,
     )
 

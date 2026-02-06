@@ -1,35 +1,33 @@
 import argparse
 import copy
+import json
+import shutil
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Callable, List, Tuple, Literal, Optional
+from typing import Dict, Any, Callable, List, Tuple, Literal
 from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from utils.generic_utils import get_json_files, save_json
-from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
+from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint, get_prediction_by_hospital_id
 from utils.explainer_helpers import (
     find_method_name,
     load_all_patients_data,
     ATTRIBUTES,
-    MAX_WORKERS,
 )
-from STAR_model import STARWrapper
+from STAR_model import STARDockerWrapper
 
 
 # ============================================================================
 # ABLATION FUNCTIONS
 # ============================================================================
 def ablate_field(data: Dict[str, Any], category: str, field: str) -> Dict[str, Any]:
-    """Remove a field from all entries in a category.
+    """
+    Remove a field from all entries in a category.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        category (str): Category name (e.g., 'insulinInfusion').
-        field (str): Field name to remove.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with field removed.
+    :param data: Patient data dictionary.
+    :param category: Category name (e.g., 'insulinInfusion').
+    :param field: Field name to remove.
+    :return: Modified patient data with field removed.
     """
 
     p = copy.deepcopy(data)
@@ -40,13 +38,11 @@ def ablate_field(data: Dict[str, Any], category: str, field: str) -> Dict[str, A
 
 
 def ablate_diabetic_status(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Remove diabetic status field.
+    """
+    Remove diabetic status field.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-
-    Returns:
-        Dict[str, Any]: Modified patient data without diabetic status.
+    :param data: Patient data dictionary.
+    :return: Modified patient data without diabetic status.
     """
 
     p = copy.deepcopy(data)
@@ -56,13 +52,11 @@ def ablate_diabetic_status(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def ablate_blood_glucose(data: Dict[str, Any]) -> Dict[str, Any]:
-    """Keep only 2 BG measurements before prediction time (minimum required).
+    """
+    Keep only 2 BG measurements before prediction time (minimum required).
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with reduced blood glucose measurements.
+    :param data: Patient data dictionary.
+    :return: Modified patient data with reduced blood glucose measurements.
     """
 
     p = copy.deepcopy(data)
@@ -75,11 +69,10 @@ def ablate_blood_glucose(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def build_ablation_registry() -> Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]]:
-    """Build registry of ablation functions for each attribute.
+    """
+    Build registry of ablation functions for each attribute.
 
-    Returns:
-        Dict[str, Callable[[Dict[str, Any]], Dict[str, Any]]]: Dictionary mapping
-            attribute names to ablation functions.
+    :return: Dictionary mapping attribute names to ablation functions.
     """
     registry = {}
 
@@ -101,11 +94,10 @@ def build_ablation_registry() -> Dict[str, Callable[[Dict[str, Any]], Dict[str, 
 # PERTURBATION FUNCTIONS
 # ============================================================================
 def build_perturbation_registry() -> Dict[str, Tuple[str, Any]]:
-    """Build registry of perturbation strategies (type, magnitude).
+    """
+    Build registry of perturbation strategies (type, magnitude).
 
-    Returns:
-        Dict[str, Tuple[str, Any]]: Dictionary mapping attribute names to
-            (perturbation_type, parameter) tuples.
+    :return: Dictionary mapping attribute names to (perturbation_type, parameter) tuples.
     """
     return {
         "diabeticStatus": ("categorical", [0, 1, 2]),
@@ -131,17 +123,15 @@ def build_perturbation_registry() -> Dict[str, Tuple[str, Any]]:
 
 
 def perturb_continuous(
-    data: Dict[str, Any], attr: str, magnitude: float
+        data: Dict[str, Any], attr: str, magnitude: float
 ) -> Dict[str, Any]:
-    """Perturb continuous attribute by percentage with bounds checking.
+    """
+    Perturb continuous attribute by percentage with bounds checking.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        attr (str): Attribute name (e.g., 'bloodGlucose.value').
-        magnitude (float): Perturbation magnitude as decimal (e.g., 0.25 for 25%).
-
-    Returns:
-        Dict[str, Any]: Modified patient data with perturbed values.
+    :param data: Patient data dictionary.
+    :param attr: Attribute name (e.g., 'bloodGlucose.value').
+    :param magnitude: Perturbation magnitude as decimal (e.g., 0.25 for 25%).
+    :return: Modified patient data with perturbed values.
     """
     p = copy.deepcopy(data)
     parts = attr.split(".")
@@ -166,14 +156,12 @@ def perturb_continuous(
 
 
 def perturb_binary(data: Dict[str, Any], attr: str) -> Dict[str, Any]:
-    """Flip binary attribute.
+    """
+    Flip binary attribute.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        attr (str): Attribute name.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with flipped binary value.
+    :param data: Patient data dictionary.
+    :param attr: Attribute name.
+    :return: Modified patient data with flipped binary value.
     """
     p = copy.deepcopy(data)
     parts = attr.split(".")
@@ -193,17 +181,15 @@ def perturb_binary(data: Dict[str, Any], attr: str) -> Dict[str, Any]:
 
 
 def perturb_categorical(
-    data: Dict[str, Any], attr: str, values: List[int]
+        data: Dict[str, Any], attr: str, values: List[int]
 ) -> Dict[str, Any]:
-    """Change categorical attribute to different value.
+    """
+    Change categorical attribute to different value.
 
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        attr (str): Attribute name.
-        values (List[int]): List of possible categorical values.
-
-    Returns:
-        Dict[str, Any]: Modified patient data with changed categorical value.
+    :param data: Patient data dictionary.
+    :param attr: Attribute name.
+    :param values: List of possible categorical values.
+    :return: Modified patient data with changed categorical value.
     """
     p = copy.deepcopy(data)
 
@@ -226,71 +212,57 @@ def perturb_categorical(
     return p
 
 
+def save_patients_batch(patients_data: List[Dict[str, Any]], temp_dir: Path) -> List[str]:
+    """
+    Save patient data to JSON files.
+
+    :param patients_data: List of patient data dictionaries.
+    :param temp_dir: Directory to save files.
+    :return: List of file paths.
+    """
+
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    patient_files = []
+    for idx, patient_data in enumerate(patients_data):
+        temp_file = temp_dir / f"patient_{idx}.json"
+        with open(temp_file, 'w') as f:
+            json.dump(patient_data, f)
+        patient_files.append(str(temp_file))
+
+    return patient_files
+
+
 # ============================================================================
 # MAE COMPUTATION
 # ============================================================================
-def process_single_patient(
-    data: Dict[str, Any],
-    star_api: STARWrapper,
-) -> Optional[float]:
-    """Process single patient and compute absolute error.
-
-    Args:
-        data (Dict[str, Any]): Patient data dictionary.
-        star_api (STARWrapper): STAR API wrapper instance.
-
-    Returns:
-        Optional[float]: Absolute error between actual and predicted values,
-            or None if failed.
-    """
-    try:
-        pred_time, actual_value = extract_prediction_info(data)
-        pred_interval = star_api.predict(patient_data=data, prediction_time=pred_time)
-
-        # Calculate midpoint of prediction interval
-        predicted_midpoint = calculate_interval_midpoint(pred_interval)
-
-        # Calculate absolute error
-        ae = abs(actual_value - predicted_midpoint)
-
-        return ae
-
-    except Exception as e:
-        return None
-
-
-def compute_mae(
-    patients_data: List[Dict[str, Any]],
-    star_api: STARWrapper,
+def compute_mae_from_predictions(
+        patients_data: List[Dict[str, Any]],
+        predictions_df,
 ) -> float:
-    """Compute Mean Absolute Error across all patients.
-
-    Args:
-        patients_data (List[Dict[str, Any]]): List of patient data dictionaries.
-        star_api (STARWrapper): STAR API wrapper instance.
-
-    Returns:
-        float: Mean absolute error across all successfully processed patients.
     """
+    Compute Mean Absolute Error from predictions DataFrame.
 
+    :param patients_data: List of patient data dictionaries.
+    :param predictions_df: DataFrame with BG5TH and BG95TH columns.
+    :return: Mean absolute error across all successfully processed patients.
+    """
     aes = []
+    for patient_data in patients_data:
+        try:
+            pred_time, actual_value = extract_prediction_info(patient_data)
 
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = [
-            executor.submit(process_single_patient, pat, star_api)
-            for pat in patients_data
-        ]
+            # Get predictions for this patient by hospitalID
+            bg5th, bg95th = get_prediction_by_hospital_id(patient_data, predictions_df)
 
-        for future in tqdm(
-            as_completed(futures),
-            total=len(patients_data),
-            desc="Computing MAE",
-            leave=False,
-        ):
-            ae = future.result()
-
-            if ae is not None:
-                aes.append(ae)
+            predicted_midpoint = calculate_interval_midpoint({
+                "BG5TH": bg5th,
+                "BG95TH": bg95th
+            })
+            ae = abs(actual_value - predicted_midpoint)
+            aes.append(ae)
+        except Exception:
+            continue
 
     if not aes:
         return 0.0
@@ -304,25 +276,28 @@ def compute_mae(
 # FEATURE ABLATION - FEATURE PERTURBATION ANALYSIS
 # ============================================================================
 def analyze_feature_importance(
-    patients_data: List[Dict[str, Any]],
-    star_api: STARWrapper,
-    analysis_type: Literal["feature_ablation", "feature_perturbation"],
+        patients_data: List[Dict[str, Any]],
+        star_wrapper,
+        analysis_type: Literal["feature_ablation", "feature_perturbation"],
+        temp_dir: Path,
 ) -> Dict[str, float]:
-    """Analyze feature importance using ablation or perturbation.
+    """
+    Analyze feature importance using ablation or perturbation.
 
-    Args:
-        patients_data (List[Dict[str, Any]]): List of patient data dictionaries.
-        star_api (STARWrapper): STAR API wrapper instance.
-        analysis_type (Literal["feature_ablation", "feature_perturbation"]):
-            Type of analysis.
-
-    Returns:
-        Dict[str, float]: Dictionary mapping attribute names to normalized
-            importance scores (0-1).
+    :param patients_data: List of patient data dictionaries.
+    :param star_wrapper: STAR Docker wrapper instance.
+    :param analysis_type: Type of analysis.
+    :param temp_dir: Temporary directory for storing patient files.
+    :return: Dictionary mapping attribute names to normalized importance scores (0-1).
     """
 
-    # Compute baseline MAE
-    baseline_mae = compute_mae(patients_data, star_api=star_api)
+    baseline_temp_dir = temp_dir / "baseline"
+    baseline_files = save_patients_batch(patients_data, baseline_temp_dir)
+    baseline_predictions = star_wrapper.predict_batch(baseline_files)
+    baseline_mae = compute_mae_from_predictions(patients_data, baseline_predictions)
+
+    if baseline_temp_dir.exists():
+        shutil.rmtree(baseline_temp_dir, ignore_errors=True)
 
     if analysis_type == "feature_ablation":
         transform_functions = build_ablation_registry()
@@ -363,15 +338,23 @@ def analyze_feature_importance(
         for d_ in tqdm(patients_data, desc="Transforming data", leave=False):
             try:
                 transformed_data.append(current_attr_fn(d_))
-            except Exception as e:
+            except Exception:
                 continue
 
-        # Compute MAE after transformation
-        transformed_mae = compute_mae(patients_data=transformed_data, star_api=star_api)
+        attr_temp_dir = temp_dir / f"attr_{attr_name.replace('.', '_')}"
+        transformed_files = save_patients_batch(transformed_data, attr_temp_dir)
+
+        transformed_predictions = star_wrapper.predict_batch(transformed_files)
+        transformed_mae = compute_mae_from_predictions(
+            transformed_data, transformed_predictions
+        )
 
         # Feature importance
         # Positive = INCREASE in MAE (higher MAE = worse predictions, feature is good for the model)
         # Negative = DECREASE in MAE (lower MAE = better predictions, feature is not good for the model)
+        if attr_temp_dir.exists():
+            shutil.rmtree(attr_temp_dir, ignore_errors=True)
+
         mae_diff = transformed_mae - baseline_mae
         feature_importance[attr_name] = mae_diff
 
@@ -396,19 +379,21 @@ def analyze_feature_importance(
 
 
 def feature_importance_analysis(
-    data_path: str,
-    output_path: str,
-    sensitivity: float,
+        data_path: str,
+        output_path: str,
+        sensitivity: float,
+        docker_image: str,
+        in_docker_run: bool,
 ) -> None:
-    """Run feature importance analysis on patient data.
+    """
+    Run feature importance analysis on patient data.
 
-    Args:
-        data_path (str): Path to directory containing patient JSON files.
-        output_path (str): Output directory path for results.
-        sensitivity (float): Sensitivity level [0, 1]. <0.5: ablation, >=0.5: perturbation.
-
-    Raises:
-        ValueError: If sensitivity not in [0, 1] or no files found.
+    :param data_path: Path to directory containing patient JSON files.
+    :param output_path: Output directory path for results.
+    :param sensitivity: Sensitivity level [0, 1]. <0.5: ablation, >=0.5: perturbation.
+    :param docker_image: Name of the Docker image containing the STAR model.
+    :param in_docker_run: Indicates if the script is being run inside the container.
+    :raises ValueError: If sensitivity not in [0, 1] or no files found.
     """
 
     # Validate sensitivity
@@ -430,15 +415,23 @@ def feature_importance_analysis(
     if not patients_data:
         raise ValueError("No patients successfully loaded")
 
-    # Initialize model
-    star_api = STARWrapper()
-
-    # Run analysis
-    results = analyze_feature_importance(
-        patients_data, star_api=star_api, analysis_type=method
+    star_wrapper = STARDockerWrapper(
+        docker_image=docker_image, in_docker_run=in_docker_run
     )
 
-    # Prepare output
+    temp_dir = Path(output_path) / "temp_explainer"
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    results = analyze_feature_importance(
+        patients_data,
+        star_wrapper=star_wrapper,
+        analysis_type=method,
+        temp_dir=temp_dir
+    )
+
+    if temp_dir.exists():
+        shutil.rmtree(temp_dir)
+
     output_path = Path(output_path)
     output_path = output_path / f"{method}_analysis.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -447,9 +440,23 @@ def feature_importance_analysis(
     print(f"Feature importance analysis completed. Results saved to {output_path}")
 
 
-def main() -> None:
-    """CLI entry point for feature importance analysis."""
+def str2bool(v: Literal["True", "False"]) -> bool:
+    """
+    Convert a string 'True' or 'False' to a Python boolean.
+    Raises argparse.ArgumentTypeError if the input is invalid.
+    """
+    if v == "True":
+        return True
+    elif v == "False":
+        return False
+    else:
+        raise argparse.ArgumentTypeError("Boolean value expected: 'True' or 'False'")
 
+
+def main() -> None:
+    """
+    CLI entry point for feature importance analysis.
+    """
     parser = argparse.ArgumentParser(
         description="Analyze feature importance in STAR blood glucose predictions using mae metric",
     )
@@ -469,13 +476,30 @@ def main() -> None:
         default=0.3,
         help="Sensitivity level [0, 1]. <0.5: feature ablation, >=0.5: feature perturbation. Default: 0.3",
     )
+    parser.add_argument(
+        "--docker_image",
+        type=str,
+        default="glucomeo",
+        help="The docker image to run for the model",
+    )
+    parser.add_argument(
+        "--in_docker",
+        type=str2bool,
+        default=False,
+        help="Indicates if the script will be executed inside the container of the provided docker image",
+    )
 
     args = parser.parse_args()
+
+    if not 0 <= args.sensitivity <= 1:
+        raise ValueError("Sensitivity must be between 0 and 1")
 
     feature_importance_analysis(
         data_path=args.data_path,
         output_path=args.output,
         sensitivity=args.sensitivity,
+        docker_image=args.docker_image,
+        in_docker_run=args.in_docker,
     )
 
 

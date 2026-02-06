@@ -1,201 +1,184 @@
-from typing import Dict, Any
-import requests
-import time
-import json
+import subprocess
+import pandas as pd
+from pathlib import Path
+from typing import List
+import shutil
+import os
 
 
-class STARWrapper:
-    """
-    Wrapper class for the STAR API blood glucose prediction model.
-    This wrapper provides an interface to the STAR API endpoint
-    for predicting blood glucose evolution ranges based on patient data.
-    """
-
+class STARDockerWrapper:
     def __init__(
-        self,
-        url: str = "https://demo.insilicare.com/api/star/REALM/validation",
-        timeout: int = 5,
+            self,
+            in_mount: str = "temp_mount/in",
+            out_mount: str = "temp_mount/out",
+            docker_image: str = "glucomeo",
+            in_docker_run: bool = False,
     ):
         """
-        Initialize the STAR API wrapper.
+        Wrapper for the STAR Dockerized model to allow batch prediction from Python.
 
-        Args:
-            url (str): API endpoint URL. Default is the public STAR validation endpoint.
-            timeout (int): Request timeout in seconds (default: 5).
+        :param in_mount: Local directory to mount as `/home/in` inside the container.
+        :param out_mount: Local directory to mount as `/home/out` inside the container.
+        :param docker_image: Name of the Docker image containing the STAR model.
+        :param in_docker_run: Indicates if the class runs inside the container.
         """
-        self.url = url
-        self.timeout = timeout
+        self.docker_image = docker_image
+        self.in_mount = Path(in_mount).resolve()
+        self.out_mount = Path(out_mount).resolve()
+        self.in_docker_run = in_docker_run
 
-        self.headers = {"Content-Type": "application/json"}
+        if not in_docker_run:
+            docker_cmd = shutil.which("docker")
+            if docker_cmd is None:
+                docker_cmd = "docker"
+            self.docker_executable = docker_cmd
 
-    def _validate_patient_data(self, patient_data: Dict[str, Any]) -> None:
-        """
-        Validate that patient data contains required fields.
-
-        Args:
-            patient_data (Dict[str, Any]): Patient data dictionary.
-
-        Raises:
-            ValueError: If required fields are missing or invalid.
-        """
-        required_fields = ["__class", "hospitalID", "updateTime", "episodes"]
-
-        for field in required_fields:
-            if field not in patient_data:
-                raise ValueError(f"Missing required field in patient data: {field}")
-
-        if not patient_data["episodes"]:
-            raise ValueError("Patient data must contain at least one episode")
-
-        # Check for required episode fields
-        episode = patient_data["episodes"][0]
-        required_episode_fields = [
-            "bloodGlucose",
-            "insulinInfusion",
-            "nutritionInfusion",
-        ]
-
-        for field in required_episode_fields:
-            if field not in episode:
-                raise ValueError(f"Missing required field in episode: {field}")
-
-    def _validate_prediction_time(
-        self, patient_data: Dict[str, Any], prediction_time: int
-    ) -> None:
-        """
-        Validate that prediction time is within acceptable range.
-
-        Args:
-            patient_data (Dict[str, Any]): Patient data dictionary.
-            prediction_time (int): Unix epoch time in milliseconds.
-
-        Raises:
-            ValueError: If prediction time is outside valid range.
-        """
-        update_time = patient_data["updateTime"]
-        max_time = update_time + (180 * 60 * 1000)  # updateTime + 3 hours
-
-        if prediction_time < update_time:
-            raise ValueError(
-                f"Prediction time ({prediction_time}) must be >= updateTime ({update_time})"
-            )
-
-        if prediction_time > max_time:
-            raise ValueError(
-                f"Prediction time ({prediction_time}) must be <= updateTime + 180 minutes ({max_time})"
-            )
-
-    def predict(
-        self,
-        patient_data: Dict[str, Any],
-        prediction_time: int,
-        num_retries: int = 3,
-        retry_delay: float = 2.0,
-    ) -> Dict[str, float]:
-        """
-        Predict blood glucose range at a specific time.
-
-        Makes an API request to predict the blood glucose evolution range
-        at the specified prediction time. Returns the 5th and 95th percentile
-        bounds of the predicted range.
-
-        Args:
-            patient_data (Dict[str, Any]): Complete patient data JSON object
-            prediction_time (int): Unix epoch time in milliseconds when to
-                predict the blood glucose range.
-            num_retries (int): Number of retry attempts on API failure (default: 3).
-            retry_delay (float): Initial delay between retries in seconds (default: 2.0).
-                Uses exponential backoff on subsequent retries.
-
-        Returns:
-            Dict[str, float]: Dictionary containing prediction interval with keys:
-                - "BG5TH" (float): Lower bound (5th percentile) of predicted range
-                - "BG95TH" (float): Upper bound (95th percentile) of predicted range
-
-        Raises:
-            ValueError: If patient data or prediction time validation fails.
-            RuntimeError: If API request fails after all retry attempts.
-        """
-        # Validate inputs
-        self._validate_patient_data(patient_data)
-        self._validate_prediction_time(patient_data, prediction_time)
-
-        # Prepare request payload
-        payload = {"patient": patient_data, "predictionTime": prediction_time}
-
-        # Make API request with retry mechanism
-        for attempt in range(num_retries):
             try:
-                response = requests.post(
-                    self.url, headers=self.headers, json=payload, timeout=self.timeout
+                subprocess.run(
+                    [self.docker_executable, "version"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=10
                 )
-                response.raise_for_status()
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(
+                    f"Docker is installed but not responding correctly.\n"
+                    f"Error: {e.stderr if e.stderr else e.stdout}\n"
+                    f"Please ensure Docker Desktop is running."
+                )
+            except subprocess.TimeoutExpired:
+                raise RuntimeError(
+                    "Docker command timed out. Please ensure Docker Desktop is running."
+                )
+            except FileNotFoundError:
+                raise RuntimeError(
+                    f"Cannot execute Docker at: {self.docker_executable}\n"
+                    f"Please ensure Docker Desktop is installed and running."
+                )
 
-                result = response.json()
-
-                # Validate response contains expected fields
-                if "BG5TH" not in result or "BG95TH" not in result:
-                    raise ValueError(
-                        f"API response missing required fields. Got: {result.keys()}"
-                    )
-
-                prediction_interval = {
-                    "BG5TH": result["BG5TH"],
-                    "BG95TH": result["BG95TH"],
-                }
-
-                return prediction_interval
-
-            except requests.exceptions.Timeout as e:
-                if attempt < num_retries - 1:
-                    wait_time = retry_delay * (2**attempt)
-                    time.sleep(wait_time)
-                else:
-                    raise RuntimeError(
-                        f"API request timed out after {num_retries} attempts: {e}"
-                    )
-
-            except requests.exceptions.RequestException as e:
-                if attempt < num_retries - 1:
-                    wait_time = retry_delay * (2**attempt)
-                    time.sleep(wait_time)
-                else:
-                    raise RuntimeError(
-                        f"API request failed after {num_retries} attempts: {e}"
-                    )
-
-            except (ValueError, KeyError, json.JSONDecodeError) as e:
-                # Don't retry on data/parsing errors
-                raise RuntimeError(f"Error processing API response: {e}")
-
-    def validate_prediction(
-        self,
-        interval: Dict[str, float],
-        ground_truth: float,
-    ) -> int:
+    def _format_volume_mount(self, local_path: Path, container_path: str) -> str:
         """
-        Check whether ground truth value falls within the predicted range.
+        Format volume mount string for Docker, handling Windows paths.
 
-        Validates if the provided ground truth blood glucose value falls within
-        the last prediction interval obtained from the predict() method.
-        Returns 1 if the ground truth is inside the interval (correct prediction),
-        0 otherwise (incorrect prediction).
-
-        Args:
-            interval (Dict[str, float]): Prediction interval with BG5TH and BG95TH.
-            ground_truth (float): Actual blood glucose value to compare against
-                the last predicted range.
-
-        Returns:
-            int: Binary prediction correctness indicator:
-                - 1 if ground_truth is within [BG5TH, BG95TH] (correct prediction)
-                - 0 if ground_truth is outside the range (incorrect prediction)
+        :param local_path: Local filesystem path.
+        :param container_path: Container filesystem path.
+        :return: Formatted volume mount string.
         """
+        # Use the path as-is on Windows - Docker Desktop handles Windows paths with backslashes
+        return f"{str(local_path)}:{container_path}"
 
-        # Check if ground truth is within the predicted range
-        bg_5th = interval["BG5TH"]
-        bg_95th = interval["BG95TH"]
+    def predict_batch(self, patient_files: List[str]) -> pd.DataFrame:
+        """
+        Run batch prediction on multiple patient files using Docker.
 
-        is_inside = int(bg_5th <= ground_truth <= bg_95th)
+        :param patient_files: List of paths to patient JSON files.
+        :return: DataFrame with columns BG5TH and BG95TH for each patient.
+        :raises RuntimeError: If Docker execution fails or output file not found.
+        """
+        self.in_mount.mkdir(parents=True, exist_ok=True)
+        self.out_mount.mkdir(parents=True, exist_ok=True)
 
-        return is_inside
+        for patient_file in patient_files:
+            src = Path(patient_file)
+            dst = self.in_mount / src.name
+            shutil.copy2(src, dst)
+
+        if not self.in_docker_run:
+            in_volume = self._format_volume_mount(self.in_mount, "/home/in")
+            out_volume = self._format_volume_mount(self.out_mount, "/home/out")
+
+            cmd = [
+                self.docker_executable,
+                "run",
+                "--rm",
+                "-e", "AEONICS_JAVA_OPTIONS=-Xmx1g",
+                "-e", "AEONICS_LICENSE_STORE_PATH=/opt/aeonics/aeonics.license",
+                "-e", "AEONICS_LICENSE_STORE_PASS=secret",
+                "-e", "AEONICS_ACCEPT_UNSIGNED_MODULES=true",
+                "-e", "AEONICS_LOG_LEVEL=1000",
+                "-e", f"REALM_INPUT_DIR=/home/in",
+                "-e", f"REALM_OUTPUT_DIR=/home/out",
+                "-w", "/opt/aeonics",
+                "-u", "0",
+                "-v", in_volume,
+                "-v", out_volume,
+                self.docker_image,
+            ]
+        else:
+            os.environ["REALM_INPUT_DIR"] = str(self.in_mount)
+            os.environ["REALM_OUTPUT_DIR"] = str(self.out_mount)
+            os.environ["AEONICS_JAVA_OPTIONS"] = "-Xmx1g"
+            os.environ["AEONICS_LICENSE_STORE_PATH"] = "/opt/aeonics/aeonics.license"
+            os.environ["AEONICS_LICENSE_STORE_PASS"] = "secret"
+            os.environ["AEONICS_ACCEPT_UNSIGNED_MODULES"] = "true"
+            os.environ["AEONICS_LOG_LEVEL"] = "1000"
+
+            cmd = "cd /opt/aeonics && /opt/aeonics/jre/bin/java -Xmx1g -jar aeonics.jar"
+
+        try:
+            if self.in_docker_run:
+                subprocess.run(cmd, shell=True, check=True, capture_output=True, text=True)
+            else:
+                subprocess.run(cmd, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            cmd_str = cmd if isinstance(cmd, str) else ' '.join(cmd)
+            error_msg = f"Model execution failed.\nCommand: {cmd_str}"
+            if e.stderr:
+                error_msg += f"\nStderr: {e.stderr}"
+            if e.stdout:
+                error_msg += f"\nStdout: {e.stdout}"
+            raise RuntimeError(error_msg)
+
+        output_file = self.out_mount / "results.csv"
+        if not output_file.exists():
+            raise RuntimeError(f"Output file not generated: {output_file}")
+
+        results_df = pd.read_csv(output_file)
+
+        if "BG5TH" not in results_df.columns or "BG95TH" not in results_df.columns:
+            raise ValueError(
+                f"Output CSV missing required columns. Got: {results_df.columns.tolist()}"
+            )
+
+        # Cleanup temporary directories
+        try:
+            if self.in_mount.exists():
+                shutil.rmtree(self.in_mount, ignore_errors=True)
+
+            if self.out_mount.exists():
+                shutil.rmtree(self.out_mount, ignore_errors=True)
+
+            # Remove parent temp_mount directory
+            temp_mount_parent = self.in_mount.parent
+            if temp_mount_parent.exists() and temp_mount_parent.name == "temp_mount":
+                # Remove all remaining files in temp_mount
+                for item in temp_mount_parent.iterdir():
+                    if item.is_file():
+                        item.unlink(missing_ok=True)
+                    elif item.is_dir():
+                        shutil.rmtree(item, ignore_errors=True)
+                # Remove the directory itself
+                temp_mount_parent.rmdir()
+        except Exception:
+            pass
+
+        return results_df
+
+    def validate_predictions(
+            self,
+            predictions: pd.DataFrame,
+            ground_truth: pd.Series,
+    ) -> pd.Series:
+        """
+        Check whether ground truth values fall within predicted ranges.
+
+        :param predictions: DataFrame with BG5TH and BG95TH columns.
+        :param ground_truth: Series of actual blood glucose values.
+        :return: Series of binary indicators (1 if inside range, 0 otherwise).
+        """
+        within_lower_bound = ground_truth >= predictions["BG5TH"]
+        within_upper_bound = ground_truth <= predictions["BG95TH"]
+        is_inside = within_lower_bound & within_upper_bound
+
+        return is_inside.astype(int)

@@ -1,6 +1,5 @@
-requests==2.32.5
-tqdm==4.67.1
-pandas==2.3.3
-numpy==2.3.5
-matplotlib==3.10.7
-kfp==2.14.6
+tqdm==4.67.2
+pandas==3.0.0
+numpy==2.4.2
+matplotlib==3.10.8
+kfp==2.15.2

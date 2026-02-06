@@ -8,30 +8,29 @@ from utils.explainer_helpers import find_method_name
 
 
 def plot_importances(
-    features: List[str],
-    importances: List[float],
-    title: str,
-    xlabel: str,
-    ylabel: str,
-    explanation_text: str,
-    output_path: str,
-    figsize: tuple = (8, 4),
-    show: bool = False,
+        features: List[str],
+        importances: List[float],
+        title: str,
+        xlabel: str,
+        ylabel: str,
+        explanation_text: str,
+        output_path: str,
+        figsize: tuple = (8, 4),
+        show: bool = False,
 ) -> None:
-    """Plot horizontal bar chart of feature importances with annotations.
-
-    Args:
-        features (List[str]): Feature names.
-        importances (List[float]): Importance values.
-        title (str): Plot title.
-        xlabel (str): X-axis label.
-        ylabel (str): Y-axis label.
-        explanation_text (str): Explanatory text below plot.
-        output_path (str): File path to save plot.
-        figsize (tuple): Figure size in inches. Defaults to (8, 4).
-        show (bool): Whether to display plot. Defaults to False.
     """
+    Plot horizontal bar chart of feature importances with annotations.
 
+    :param features: Feature names.
+    :param importances: Importance values.
+    :param title: Plot title.
+    :param xlabel: X-axis label.
+    :param ylabel: Y-axis label.
+    :param explanation_text: Explanatory text below plot.
+    :param output_path: File path to save plot.
+    :param figsize: Figure size in inches. Defaults to (8, 4).
+    :param show: Whether to display plot. Defaults to False.
+    """
     plt.figure(figsize=figsize)
 
     colors = [
@@ -94,17 +93,15 @@ def plot_importances(
 
 
 def visualize_feature_importance(
-    analysis_results: str, output_dir: str, sensitivity: float
+        analysis_results: str, output_dir: str, sensitivity: float
 ) -> None:
-    """Visualize feature importance analysis results and save plot.
+    """
+    Visualize feature importance analysis results and save plot.
 
-    Args:
-        analysis_results (str): Path to analysis JSON file.
-        output_dir (str): Output directory for plot.
-        sensitivity (float): Sensitivity level [0, 1].
-
-    Raises:
-        ValueError: If sensitivity not in [0, 1].
+    :param analysis_results: Path to analysis JSON file.
+    :param output_dir: Output directory for plot.
+    :param sensitivity: Sensitivity level [0, 1].
+    :raises ValueError: If sensitivity not in [0, 1].
     """
 
     # Load results
@@ -138,13 +135,15 @@ def visualize_feature_importance(
             "Lower negative values indicate features that are not important for model predictions. "
             "Values range between [-1, 1]."
         )
-    if method == "feature_perturbation":
+    elif method == "feature_perturbation":
         explanation_text = (
             "Feature Perturbation: Shows impact when features are modified. "
             "Higher positive values indicate features that are more important for accurate predictions. "
             "Lower negative values indicate features that are not important for model predictions. "
             "Values range between [-1, 1]."
         )
+    else:
+        raise ValueError(f"Unknown method: {method}")
 
     # Create title
     title = f"Sensitivity [0, 1]: {sensitivity:.2f} | Method: {method_modified}"
@@ -164,7 +163,9 @@ def visualize_feature_importance(
 
 
 def main() -> None:
-    """CLI entry point for visualizing feature importance analysis results."""
+    """
+    CLI entry point for visualizing feature importance analysis results.
+    """
     parser = argparse.ArgumentParser(
         description="Visualize feature importance analysis results for STAR blood glucose predictions"
     )

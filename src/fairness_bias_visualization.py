@@ -20,12 +20,8 @@ def demographic_names(data: Dict) -> List[Tuple[str, str]]:
     """
     Extract all available demographic names from a fairness JSON.
 
-    Args:
-        data (dict): Results JSON containing 'equalized_odds_metrics'
-                     and 'demographic_parity_metrics'.
-
-    Returns:
-        List: List of demographic names.
+    :param data: Results JSON containing 'equalized_odds_metrics' and 'demographic_parity_metrics'.
+    :return: List of demographic names.
     """
 
     demographic_names = list(data.get("equalized_odds_metrics").keys())
@@ -34,15 +30,14 @@ def demographic_names(data: Dict) -> List[Tuple[str, str]]:
 
 
 def plot_consolidated_chart(
-    data: Dict, demographic_name: str, output_dir: Path
+        data: Dict, demographic_name: str, output_dir: Path
 ) -> None:
     """
     Create consolidated 1x2 bar chart for fairness and bias metrics.
 
-    Args:
-        data (dict): Full analysis results
-        demographic_name (str): Demographic to visualize (e.g., 'Age', 'Gender')
-        output_dir (Path): Directory to save the plot
+    :param data: Full analysis results
+    :param demographic_name: Demographic to visualize (e.g., 'Age', 'Gender')
+    :param output_dir: Directory to save the plot
     """
 
     fairness_method_display = "Equalized Odds"
@@ -167,13 +162,12 @@ def plot_consolidated_chart(
 
 
 def visualize_fairness_bias_analysis(analysis_results: str, output_dir: str) -> None:
-    """Generate fairness analysis visualization plots.
-
-    Args:
-        analysis_results: Path to JSON file with fairness analysis results.
-        output_dir: Directory path to save generated plots.
     """
+    Generate fairness analysis visualization plots.
 
+    :param analysis_results: Path to JSON file with fairness analysis results.
+    :param output_dir: Directory path to save generated plots.
+    """
     # Load data
     analysis_results = load_json_file(analysis_results)
 
@@ -196,8 +190,6 @@ def visualize_fairness_bias_analysis(analysis_results: str, output_dir: str) -> 
 def main() -> None:
     """
     Main entry point for visualizing fairness and bias analysis results.
-    Parses command-line arguments for the JSON file containing metrics
-    and the output directory to save the visualizations.
     """
 
     parser = argparse.ArgumentParser(
