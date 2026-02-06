@@ -4,7 +4,7 @@ from typing import Dict, Any, Literal
 from pathlib import Path
 
 from utils.generic_utils import load_json_file, get_json_files, save_json
-from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
+from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint, get_prediction_by_hospital_id
 
 DEMOGRAPHICS_COLUMNS = {"age": "age", "gender": "gender"}
 
@@ -129,7 +129,7 @@ def load_predictions_and_data(
         )
 
     results = []
-    for idx, filepath in enumerate(patient_files):
+    for filepath in patient_files:
         try:
             patient_data = load_json_file(filepath)
             pred_time, actual_value = extract_prediction_info(patient_data)
@@ -139,9 +139,11 @@ def load_predictions_and_data(
             age = episode.get("age", None)
             gender = episode.get("gender", None) # False=Male, True=Female
 
+            # Get predictions for this patient by hospitalID
+            bg5th, bg95th = get_prediction_by_hospital_id(patient_data, predictions_df)
             interval_center = calculate_interval_midpoint({
-                "BG5TH": predictions_df.iloc[idx]["BG5TH"],
-                "BG95TH": predictions_df.iloc[idx]["BG95TH"]
+                "BG5TH": bg5th,
+                "BG95TH": bg95th
             })
 
             results.append({
@@ -149,8 +151,8 @@ def load_predictions_and_data(
                 "age": age,
                 "gender": "Female" if gender else "Male",
                 "ground_truth": actual_value,
-                "BG5TH": predictions_df.iloc[idx]["BG5TH"],
-                "BG95TH": predictions_df.iloc[idx]["BG95TH"],
+                "BG5TH": bg5th,
+                "BG95TH": bg95th,
                 "interval_center": interval_center,
                 "success": True,
                 "error_message": None,

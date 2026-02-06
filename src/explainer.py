@@ -8,7 +8,7 @@ from typing import Dict, Any, Callable, List, Tuple, Literal
 from tqdm import tqdm
 
 from utils.generic_utils import get_json_files, save_json
-from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint
+from utils.data_helpers import extract_prediction_info, calculate_interval_midpoint, get_prediction_by_hospital_id
 from utils.explainer_helpers import (
     find_method_name,
     load_all_patients_data,
@@ -248,12 +248,16 @@ def compute_mae_from_predictions(
     :return: Mean absolute error across all successfully processed patients.
     """
     aes = []
-    for idx, patient_data in enumerate(patients_data):
+    for patient_data in patients_data:
         try:
             pred_time, actual_value = extract_prediction_info(patient_data)
+
+            # Get predictions for this patient by hospitalID
+            bg5th, bg95th = get_prediction_by_hospital_id(patient_data, predictions_df)
+
             predicted_midpoint = calculate_interval_midpoint({
-                "BG5TH": predictions_df.iloc[idx]["BG5TH"],
-                "BG95TH": predictions_df.iloc[idx]["BG95TH"]
+                "BG5TH": bg5th,
+                "BG95TH": bg95th
             })
             ae = abs(actual_value - predicted_midpoint)
             aes.append(ae)
