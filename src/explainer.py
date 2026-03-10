@@ -275,6 +275,37 @@ def compute_mae_from_predictions(
 # ============================================================================
 # FEATURE ABLATION - FEATURE PERTURBATION ANALYSIS
 # ============================================================================
+def get_attr_unique_values(patients_data: List[Dict[str, Any]], attr_name: str) -> set:
+    """
+    Collect all unique values of an attribute across all patients.
+
+    :param patients_data: List of patient data dictionaries.
+    :param attr_name: Attribute name (e.g., 'insulinInfusion.route' or 'diabeticStatus').
+    :return: Set of unique values found in the dataset for this attribute.
+    """
+    values = set()
+    parts = attr_name.split(".")
+    for patient in patients_data:
+        try:
+            episode = patient["episodes"][0]
+            if len(parts) == 1:
+                val = episode.get(parts[0])
+                if val is not None:
+                    values.add(val)
+            else:
+                category, field = parts
+                for item in episode.get(category, []):
+                    if category == "bloodGlucose":
+                        values.add(item[1])
+                    else:
+                        val = item[1].get(field)
+                        if val is not None:
+                            values.add(val)
+        except Exception:
+            pass
+    return values
+
+
 def analyze_feature_importance(
         patients_data: List[Dict[str, Any]],
         star_wrapper,
@@ -313,6 +344,16 @@ def analyze_feature_importance(
             current_attr_fn = transform_functions[attr_name]
 
         elif analysis_type == "feature_perturbation":
+            # Skip zero-variance attributes: if all patients share a single value for this
+            # attribute, perturbing it forces every patient outside the observed data
+            # distribution. The model was never trained on such inputs and may hang or
+            # produce undefined results. Feature importance is 0.0 by definition —
+            # the dataset contains no evidence that this attribute varies.
+            unique_values = get_attr_unique_values(patients_data, attr_name)
+            if len(unique_values) <= 1:
+                feature_importance[attr_name] = 0.0
+                continue
+
             perturb_type, perturb_param = transform_functions[attr_name]
 
             # Perturbation function with captured variables
