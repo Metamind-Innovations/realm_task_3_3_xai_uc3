@@ -4,6 +4,11 @@ from typing import List, Dict, Any, Literal
 from utils.generic_utils import load_json_file
 
 
+# Attributes that cause the STAR model to hang when perturbed.
+# insulinInfusion.route: flipping IV (0) to SubQ (1) across all ICU patients
+# triggers a physiologically impossible scenario that the model cannot process.
+PROBLEMATIC_PERTURBATION_ATTRIBUTES = {"insulinInfusion.route"}
+
 ATTRIBUTES = [
     "diabeticStatus",
     "bloodGlucose.value",
