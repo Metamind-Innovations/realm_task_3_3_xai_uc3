@@ -13,6 +13,7 @@ from utils.explainer_helpers import (
     find_method_name,
     load_all_patients_data,
     ATTRIBUTES,
+    PROBLEMATIC_PERTURBATION_ATTRIBUTES,
 )
 from STAR_model import STARDockerWrapper
 
@@ -313,6 +314,12 @@ def analyze_feature_importance(
             current_attr_fn = transform_functions[attr_name]
 
         elif analysis_type == "feature_perturbation":
+            # Skip attributes known to cause the STAR model to hang when perturbed.
+            # These produce clinically impossible inputs that the model cannot process.
+            if attr_name in PROBLEMATIC_PERTURBATION_ATTRIBUTES:
+                feature_importance[attr_name] = 0.0
+                continue
+
             perturb_type, perturb_param = transform_functions[attr_name]
 
             # Perturbation function with captured variables

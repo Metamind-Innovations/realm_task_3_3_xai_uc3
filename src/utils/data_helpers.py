@@ -82,8 +82,7 @@ def get_prediction_by_hospital_id(
     if len(matching_rows) > 1:
         raise ValueError(f"Multiple predictions found for hospitalID: {hospital_id}")
 
-    idx = matching_rows.index[0]
-    bg5th = predictions_df.iloc[idx]["BG5TH"]
-    bg95th = predictions_df.iloc[idx]["BG95TH"]
+    bg5th = matching_rows.iloc[0]["BG5TH"]
+    bg95th = matching_rows.iloc[0]["BG95TH"]
 
     return bg5th, bg95th
