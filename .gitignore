@@ -5,3 +5,4 @@ __pycache__/
 *.yaml
 data/
 output/
+.idea
