@@ -478,3 +478,9 @@ The pipeline stores generated artifacts in MinIO object storage within the Kubef
 ## 📜 License & Usage
 
 All rights reserved by MetaMinds Innovations.
+
+## Acknowledgements
+
+🇪🇺 REALM project has received funding from the European Union's Horizon Europe research and innovation programme under **Grant Agreement No. 101095435**.
+
+*Disclaimer: Funded by the European Union. Views and opinions expressed are however those of the author(s) only and do not necessarily reflect those of the European Union or European Commission. Neither the European Union nor the European Commission can be held responsible for them.*
